@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ page_title or app_title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  </head>
+  <body>
+    <div class="page-shell">
+      {% if logged_in %}
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">MySQL HeatWave</p>
+          <h1>{{ app_title }}</h1>
+        </div>
+        <div class="topbar-meta">
+          <div>
+            <span class="meta-label">User</span>
+            <strong>{{ current_user or "-" }}</strong>
+          </div>
+          <div>
+            <span class="meta-label">Profile</span>
+            <strong>{{ current_profile_name or "-" }}</strong>
+          </div>
+          <div>
+            <span class="meta-label">Connection</span>
+            <strong>{{ connection_summary }}</strong>
+          </div>
+          <form method="post" action="{{ url_for('logout') }}">
+            <button class="button secondary" type="submit">Logout</button>
+          </form>
+        </div>
+      </header>
+
+      <nav class="nav-groups">
+        {% for group in nav_groups %}
+        <section class="nav-group">
+          <span class="nav-group-title">{{ group["label"] }}</span>
+          <div class="nav-links">
+            {% for item in group["items"] %}
+            <a
+              href="{{ url_for(item["endpoint"]) }}"
+              class="nav-link {% if current_endpoint == item["endpoint"] %}active{% endif %}"
+            >
+              {{ item["label"] }}
+            </a>
+            {% endfor %}
+          </div>
+        </section>
+        {% endfor %}
+      </nav>
+      {% endif %}
+
+      <main class="content-card">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            <div class="flash-stack">
+              {% for category, message in messages %}
+              <div class="flash {{ category }}">{{ message }}</div>
+              {% endfor %}
+            </div>
+          {% endif %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+  </body>
+</html>

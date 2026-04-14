@@ -1,0 +1,10 @@
+{
+  "profiles": [
+    {
+      "name": "LB_londonDB",
+      "host": "143.47.226.231",
+      "port": 3306,
+      "database": "performance_schema"
+    }
+  ]
+}

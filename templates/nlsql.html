@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-header">
+  <p class="eyebrow">HeatWave</p>
+  <h2>HWnlsql</h2>
+  <p>Run natural-language SQL against the schemas enabled in `nlsql.configdb`.</p>
+  <a class="doc-link" href="{{ docs_url }}" target="_blank" rel="noreferrer">Open NL_SQL documentation</a>
+</section>
+
+<form method="post" class="split-layout">
+  <article class="panel">
+    <h3>Prompt</h3>
+    <label>
+      Question
+      <textarea name="question" rows="6">{{ question }}</textarea>
+    </label>
+    <label>
+      Choose LLM
+      <select name="llm">
+        {% for model in llm_models %}
+        <option value="{{ model }}" {% if model == selected_model %}selected{% endif %}>{{ model }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="form-actions">
+      <button class="button primary" type="submit">Submit</button>
+    </div>
+  </article>
+
+  <article class="panel">
+    <h3>Enabled Schemas</h3>
+    <div class="checkbox-grid">
+      {% for database in available_databases %}
+      <label class="checkbox-row">
+        <input type="checkbox" name="databases" value="{{ database }}" {% if database in selected_databases %}checked{% endif %}>
+        <span>{{ database }}</span>
+      </label>
+      {% else %}
+      <p>No schemas are enabled. Use Setup configdb first.</p>
+      {% endfor %}
+    </div>
+  </article>
+</form>
+
+{% if sql_text or table_names %}
+<section class="panel result-panel">
+  <h3>Generated SQL</h3>
+  <textarea rows="8" readonly>{{ sql_text }}</textarea>
+  <h3>Referenced Tables</h3>
+  <textarea rows="4" readonly>{{ table_names }}</textarea>
+</section>
+{% endif %}
+
+{% for table in result_tables %}
+<section class="panel result-panel">
+  <h3>Result {{ loop.index }}</h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          {% for column in table.columns %}
+          <th>{{ column }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in table.rows %}
+        <tr>
+          {% for value in row %}
+          <td>{{ value }}</td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endfor %}
+{% endblock %}

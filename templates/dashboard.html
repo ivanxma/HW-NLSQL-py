@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-header">
+  <p class="eyebrow">Dashboard</p>
+  <h2>HeatWave Demo</h2>
+  <p>
+    This application uses HeatWave GenAI features on your configured MySQL connection.
+    Use the top menu to manage the connection profile, choose schemas for `nlsql.configdb`,
+    run NL_SQL, and ask questions about uploaded images.
+  </p>
+</section>
+
+<section class="info-grid">
+  <article class="info-card">
+    <h3>Connection</h3>
+    <p>{{ connection_summary }}</p>
+  </article>
+  <article class="info-card">
+    <h3>Profile</h3>
+    <p>{{ current_profile_name or "No active profile" }}</p>
+  </article>
+  <article class="info-card">
+    <h3>User</h3>
+    <p>{{ current_user or "Not logged in" }}</p>
+  </article>
+</section>
+{% endblock %}
