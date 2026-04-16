@@ -46,6 +46,7 @@ sudo ./setup.sh
 
 The setup script:
 
+- detects whether the host is Ubuntu, Oracle Linux 8, or Oracle Linux 9 and runs the matching package installation
 - installs `python3`, `pip`, and `openssl`
 - creates `.venv` in the project directory
 - installs the Python packages from `requirements.txt` into that virtual environment

@@ -13,6 +13,9 @@ APP_PORT="${APP_PORT:-443}"
 APP_SSL_CN="${APP_SSL_CN:-$(hostname -f 2>/dev/null || hostname)}"
 SKIP_SYSTEMD="${SETUP_SKIP_SYSTEMD:-0}"
 SYSTEMD_SUPPORTED=1
+OS_ID=""
+OS_VERSION_ID=""
+OS_VERSION_MAJOR=""
 
 systemd_available() {
   command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]
@@ -31,22 +34,66 @@ run_as_root() {
   fi
 }
 
+detect_os() {
+  if [[ ! -r /etc/os-release ]]; then
+    echo "Cannot detect operating system because /etc/os-release is missing." >&2
+    exit 1
+  fi
+
+  # shellcheck disable=SC1091
+  . /etc/os-release
+
+  OS_ID="${ID:-}"
+  OS_VERSION_ID="${VERSION_ID:-}"
+  OS_VERSION_MAJOR="${OS_VERSION_ID%%.*}"
+
+  echo "Detected operating system: ${PRETTY_NAME:-${OS_ID} ${OS_VERSION_ID}}"
+}
+
+install_ubuntu_packages() {
+  require_command apt-get
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  apt-get install -y python3 python3-venv python3-full openssl
+  SYSTEMD_SUPPORTED=0
+}
+
+install_ol8_packages() {
+  require_command dnf
+  dnf install -y python3 python3-pip python3-setuptools python3-wheel openssl
+}
+
+install_ol9_packages() {
+  require_command dnf
+  dnf install -y python3 python3-pip python3-setuptools python3-pip-wheel openssl
+}
+
 install_os_packages() {
-  if command -v apt-get >/dev/null 2>&1; then
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update
-    apt-get install -y python3 python3-venv python3-full openssl
-    SYSTEMD_SUPPORTED=0
-    return
-  fi
+  detect_os
 
-  if command -v dnf >/dev/null 2>&1; then
-    dnf install -y python3 python3-pip openssl
-    return
-  fi
-
-  echo "Unsupported package manager. Install python3, python3-pip, and openssl manually." >&2
-  exit 1
+  case "${OS_ID}" in
+    ubuntu)
+      install_ubuntu_packages
+      ;;
+    ol|oracle|oraclelinux)
+      case "${OS_VERSION_MAJOR}" in
+        8)
+          install_ol8_packages
+          ;;
+        9)
+          install_ol9_packages
+          ;;
+        *)
+          echo "Unsupported Oracle Linux version: ${OS_VERSION_ID}. Expected Oracle Linux 8 or 9." >&2
+          exit 1
+          ;;
+      esac
+      ;;
+    *)
+      echo "Unsupported operating system: ${OS_ID} ${OS_VERSION_ID}. Expected Ubuntu, Oracle Linux 8, or Oracle Linux 9." >&2
+      exit 1
+      ;;
+  esac
 }
 
 install_python_environment() {
