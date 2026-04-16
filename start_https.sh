@@ -6,6 +6,7 @@ APP_FILE="${APP_FILE:-app.py}"
 ADDRESS="${APP_ADDRESS:-0.0.0.0}"
 PORT="${APP_PORT:-443}"
 SSL_CN="${APP_SSL_CN:-localhost}"
+SKIP_SUDO_REEXEC="${APP_SKIP_SUDO_REEXEC:-0}"
 CERT_DIR="${ROOT_DIR}/.certs"
 CERT_FILE="${APP_SSL_CERT_FILE:-${CERT_DIR}/app-selfsigned.crt}"
 KEY_FILE="${APP_SSL_KEY_FILE:-${CERT_DIR}/app-selfsigned.key}"
@@ -37,7 +38,7 @@ if [[ ! -f "${CERT_FILE}" || ! -f "${KEY_FILE}" ]]; then
   generate_self_signed_cert
 fi
 
-if (( PORT < 1024 )) && [[ "${EUID}" -ne 0 ]]; then
+if (( PORT < 1024 )) && [[ "${EUID}" -ne 0 ]] && [[ "${SKIP_SUDO_REEXEC}" != "1" ]]; then
   echo "Re-running with sudo so the app can bind to port ${PORT}."
   exec sudo -E bash "$0" "$@"
 fi

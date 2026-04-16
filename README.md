@@ -37,22 +37,31 @@ git clone https://github.com/ivanxma/HW-NLSQL-py
 cd HW-NLSQL-py
 ```
 
-Then install the application dependencies at the global system level so they are available when you run the app as `opc` and also when the launcher re-runs with `sudo`:
+Run the setup script to install the OS packages, install `requirements.txt` globally, and create and start the HTTPS systemd service:
 
 ```bash
-sudo python3 -m pip install -r requirements.txt
+chmod +x setup.sh start_https.sh
+sudo ./setup.sh
 ```
+
+The setup script:
+
+- installs `python3`, `pip`, and `openssl`
+- installs the Python packages from `requirements.txt` globally
+- creates `hw-nlsql-https.service`
+- enables and starts the HTTPS service on port `443`
 
 ## Run
 
-Start the app with HTTPS on port `443`:
+Manage the HTTPS service with `systemctl`:
 
 ```bash
-./start_https.sh
+sudo systemctl status hw-nlsql-https.service
+sudo systemctl restart hw-nlsql-https.service
+sudo journalctl -u hw-nlsql-https.service -f
 ```
 
-The launcher generates a self-signed certificate under `.certs/` if one does not already exist.
-If port `443` requires elevated privileges on your host, the script re-runs itself with `sudo`.
+The launcher still generates a self-signed certificate under `.certs/` if one does not already exist.
 
 ## Configure
 

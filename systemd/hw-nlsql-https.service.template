@@ -1,0 +1,23 @@
+[Unit]
+Description=HeatWave Demo HTTPS service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__SERVICE_USER__
+Group=__SERVICE_GROUP__
+WorkingDirectory=__ROOT_DIR__
+Environment=APP_ADDRESS=__APP_ADDRESS__
+Environment=APP_PORT=__APP_PORT__
+Environment=APP_SSL_CN=__APP_SSL_CN__
+Environment=APP_SKIP_SUDO_REEXEC=1
+ExecStart=__ROOT_DIR__/start_https.sh
+Restart=on-failure
+RestartSec=5
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
