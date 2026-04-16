@@ -70,6 +70,43 @@ If `systemd` is not available, start the app directly:
 /bin/bash ./start_https.sh
 ```
 
+## Kubernetes
+
+Deploy to Kubernetes in a dedicated `nlsql` namespace:
+
+1. Create the namespace:
+
+```bash
+kubectl create ns nlsql
+```
+
+2. Apply the manifest:
+
+```bash
+kubectl apply -n nlsql -f k8s/hw-nlsql.yaml
+```
+
+3. Check the deployment and service:
+
+```bash
+kubectl get deploy,po,svc -n nlsql
+```
+
+4. If the pod is still starting or restarting, check the logs:
+
+```bash
+kubectl logs -n nlsql deployment/hw-nlsql
+```
+
+5. If you update the manifest and need to restart the pod:
+
+```bash
+kubectl rollout restart deployment/hw-nlsql -n nlsql
+kubectl rollout status deployment/hw-nlsql -n nlsql
+```
+
+The Kubernetes manifest creates the `Secret`, `ConfigMap`, `Deployment`, and `LoadBalancer` `Service` in namespace `nlsql`.
+
 ## Configure
 
 1. Open the app.

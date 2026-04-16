@@ -2,6 +2,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: hw-nlsql-secret
+  namespace: nlsql
 type: Opaque
 stringData:
   FLASK_SECRET_KEY: change-this-secret-key
@@ -10,6 +11,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: hw-nlsql-bootstrap
+  namespace: nlsql
 data:
   start.sh: |
     #!/usr/bin/env bash
@@ -47,6 +49,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: hw-nlsql
+  namespace: nlsql
 spec:
   replicas: 1
   selector:
@@ -105,6 +108,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: hw-nlsql
+  namespace: nlsql
 spec:
   selector:
     app: hw-nlsql
