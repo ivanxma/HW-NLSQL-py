@@ -51,6 +51,7 @@ install_python_requirements() {
 }
 
 prepare_runtime_files() {
+  chmod 755 "${ROOT_DIR}/start_https.sh"
   install -d -m 755 -o "${SERVICE_USER}" -g "${SERVICE_GROUP}" "${ROOT_DIR}/.certs"
   chown -R "${SERVICE_USER}:${SERVICE_GROUP}" "${ROOT_DIR}/.certs"
 
