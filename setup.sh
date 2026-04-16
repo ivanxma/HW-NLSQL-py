@@ -136,6 +136,77 @@ install_systemd_service() {
   systemctl enable --now "${SERVICE_NAME}.service"
 }
 
+configure_ubuntu_firewall() {
+  if ! command -v ufw >/dev/null 2>&1; then
+    return
+  fi
+
+  if ufw status | grep -q "^Status: active"; then
+    ufw allow "${APP_PORT}/tcp"
+    echo "Opened port ${APP_PORT}/tcp in ufw."
+  fi
+}
+
+configure_firewalld() {
+  if ! command -v firewall-cmd >/dev/null 2>&1; then
+    return
+  fi
+
+  if systemctl is-active --quiet firewalld; then
+    if [[ "${APP_PORT}" == "443" ]]; then
+      firewall-cmd --permanent --add-service=https
+    else
+      firewall-cmd --permanent --add-port="${APP_PORT}/tcp"
+    fi
+    firewall-cmd --reload
+    echo "Opened port ${APP_PORT}/tcp in firewalld."
+  fi
+}
+
+configure_selinux_port() {
+  if ! command -v getenforce >/dev/null 2>&1; then
+    return
+  fi
+
+  if [[ "$(getenforce)" == "Disabled" ]]; then
+    return
+  fi
+
+  if [[ "${APP_PORT}" == "443" ]]; then
+    echo "SELinux already permits HTTPS on port 443."
+    return
+  fi
+
+  if ! command -v semanage >/dev/null 2>&1; then
+    echo "SELinux is enabled but 'semanage' is not installed; port ${APP_PORT} may need manual labeling." >&2
+    return
+  fi
+
+  if semanage port -l | grep -E '^http_port_t' | grep -qw "${APP_PORT}"; then
+    return
+  fi
+
+  if semanage port -l | grep -qw "${APP_PORT}"; then
+    semanage port -m -t http_port_t -p tcp "${APP_PORT}"
+  else
+    semanage port -a -t http_port_t -p tcp "${APP_PORT}"
+  fi
+
+  echo "Configured SELinux to allow HTTP/S traffic on port ${APP_PORT}."
+}
+
+configure_host_access() {
+  case "${OS_ID}" in
+    ubuntu)
+      configure_ubuntu_firewall
+      ;;
+    ol|oracle|oraclelinux)
+      configure_firewalld
+      configure_selinux_port
+      ;;
+  esac
+}
+
 main() {
   run_as_root "$@"
   install_os_packages
@@ -159,6 +230,7 @@ main() {
   fi
 
   install_systemd_service
+  configure_host_access
 
   echo
   echo "Setup complete."
