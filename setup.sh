@@ -55,7 +55,6 @@ install_ubuntu_packages() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
   apt-get install -y python3 python3-venv python3-full openssl
-  SYSTEMD_SUPPORTED=0
 }
 
 install_ol8_packages() {

@@ -50,8 +50,8 @@ The setup script:
 - installs `python3`, `pip`, and `openssl`
 - creates `.venv` in the project directory
 - installs the Python packages from `requirements.txt` into that virtual environment
-- does not use `systemctl` on Ubuntu environments
-- creates and starts `hw-nlsql-https.service` only on supported non-Ubuntu `systemd` environments
+- creates and starts `hw-nlsql-https.service` on port `443` when `systemd` is available
+- falls back to direct startup instructions only when `systemd` is not available
 
 ## Run
 
