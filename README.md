@@ -9,8 +9,38 @@ This application now uses Flask instead of Streamlit while preserving the same c
 
 ## Install
 
+Install `git` first, depending on your operating system:
+
+### Ubuntu
+
 ```bash
-pip install -r requirements.txt
+sudo apt update
+sudo apt install -y git python3 python3-pip python3-venv
+```
+
+### Oracle Linux 8
+
+```bash
+sudo dnf install -y git python3 python3-pip python3-setuptools python3-wheel
+```
+
+### Oracle Linux 9
+
+```bash
+sudo dnf install -y git python3 python3-pip python3-setuptools python3-pip-wheel
+```
+
+Clone the repository and enter the project directory:
+
+```bash
+git clone https://github.com/ivanxma/HW-NLSQL-py
+cd HW-NLSQL-py
+```
+
+Then install the application dependencies at the global system level so they are available when you run the app as `opc` and also when the launcher re-runs with `sudo`:
+
+```bash
+sudo python3 -m pip install -r requirements.txt
 ```
 
 ## Run
