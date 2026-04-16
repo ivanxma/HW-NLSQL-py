@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_FILE="${APP_FILE:-app.py}"
 ADDRESS="${APP_ADDRESS:-0.0.0.0}"
 PORT="${1:-${APP_PORT:-8080}}"
+PYTHON_BIN="${APP_PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -13,7 +14,12 @@ require_command() {
   fi
 }
 
-require_command python3
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+  PYTHON_BIN="python3"
+fi
+
+require_command "${PYTHON_BIN}"
+echo "Using Python interpreter: ${PYTHON_BIN}"
 
 if (( PORT < 1024 )) && [[ "${EUID}" -ne 0 ]]; then
   echo "Re-running with sudo so the app can bind to port ${PORT}."
@@ -25,4 +31,4 @@ export APP_PORT="${PORT}"
 unset APP_SSL_CERT_FILE
 unset APP_SSL_KEY_FILE
 
-exec python3 "${ROOT_DIR}/${APP_FILE}"
+exec "${PYTHON_BIN}" "${ROOT_DIR}/${APP_FILE}"

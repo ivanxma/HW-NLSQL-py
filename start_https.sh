@@ -7,6 +7,7 @@ ADDRESS="${APP_ADDRESS:-0.0.0.0}"
 PORT="${APP_PORT:-443}"
 SSL_CN="${APP_SSL_CN:-localhost}"
 SKIP_SUDO_REEXEC="${APP_SKIP_SUDO_REEXEC:-0}"
+PYTHON_BIN="${APP_PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
 CERT_DIR="${ROOT_DIR}/.certs"
 CERT_FILE="${APP_SSL_CERT_FILE:-${CERT_DIR}/app-selfsigned.crt}"
 KEY_FILE="${APP_SSL_KEY_FILE:-${CERT_DIR}/app-selfsigned.key}"
@@ -31,8 +32,14 @@ generate_self_signed_cert() {
   chmod 600 "${KEY_FILE}"
 }
 
-require_command python3
 require_command openssl
+
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+  PYTHON_BIN="python3"
+fi
+
+require_command "${PYTHON_BIN}"
+echo "Using Python interpreter: ${PYTHON_BIN}"
 
 if [[ ! -f "${CERT_FILE}" || ! -f "${KEY_FILE}" ]]; then
   generate_self_signed_cert
@@ -48,4 +55,4 @@ export APP_PORT="${PORT}"
 export APP_SSL_CERT_FILE="${CERT_FILE}"
 export APP_SSL_KEY_FILE="${KEY_FILE}"
 
-exec python3 "${ROOT_DIR}/${APP_FILE}"
+exec "${PYTHON_BIN}" "${ROOT_DIR}/${APP_FILE}"

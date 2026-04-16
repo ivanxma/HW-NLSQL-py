@@ -15,7 +15,7 @@ Install `git` first, depending on your operating system:
 
 ```bash
 sudo apt update
-sudo apt install -y git python3 python3-pip python3-venv
+sudo apt install -y git python3 python3-pip python3-venv python3-full
 ```
 
 ### Oracle Linux 8
@@ -37,7 +37,7 @@ git clone https://github.com/ivanxma/HW-NLSQL-py
 cd HW-NLSQL-py
 ```
 
-Run the setup script to install the OS packages, install `requirements.txt` globally, and create and start the HTTPS systemd service:
+Run the setup script to install the OS packages and create a local Python virtual environment in `.venv`:
 
 ```bash
 chmod +x setup.sh start_https.sh
@@ -47,13 +47,14 @@ sudo ./setup.sh
 The setup script:
 
 - installs `python3`, `pip`, and `openssl`
-- installs the Python packages from `requirements.txt` globally
-- creates `hw-nlsql-https.service`
-- enables and starts the HTTPS service on port `443`
+- creates `.venv` in the project directory
+- installs the Python packages from `requirements.txt` into that virtual environment
+- does not use `systemctl` on Ubuntu environments
+- creates and starts `hw-nlsql-https.service` only on supported non-Ubuntu `systemd` environments
 
 ## Run
 
-Manage the HTTPS service with `systemctl`:
+If the service was created, manage the HTTPS service with `systemctl`:
 
 ```bash
 sudo systemctl status hw-nlsql-https.service
@@ -62,6 +63,12 @@ sudo journalctl -u hw-nlsql-https.service -f
 ```
 
 The launcher still generates a self-signed certificate under `.certs/` if one does not already exist.
+
+If `systemd` is not available, start the app directly:
+
+```bash
+/bin/bash ./start_https.sh
+```
 
 ## Configure
 

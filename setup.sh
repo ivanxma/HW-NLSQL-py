@@ -7,9 +7,16 @@ SERVICE_TEMPLATE="${ROOT_DIR}/systemd/${SERVICE_NAME}.service.template"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 SERVICE_USER="${SERVICE_USER:-${SUDO_USER:-$(id -un)}}"
 SERVICE_GROUP="${SERVICE_GROUP:-$(id -gn "${SERVICE_USER}")}"
+VENV_DIR="${APP_VENV_DIR:-${ROOT_DIR}/.venv}"
 APP_ADDRESS="${APP_ADDRESS:-0.0.0.0}"
 APP_PORT="${APP_PORT:-443}"
 APP_SSL_CN="${APP_SSL_CN:-$(hostname -f 2>/dev/null || hostname)}"
+SKIP_SYSTEMD="${SETUP_SKIP_SYSTEMD:-0}"
+SYSTEMD_SUPPORTED=1
+
+systemd_available() {
+  command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]
+}
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -28,7 +35,8 @@ install_os_packages() {
   if command -v apt-get >/dev/null 2>&1; then
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
-    apt-get install -y python3 python3-pip python3-venv openssl
+    apt-get install -y python3 python3-venv python3-full openssl
+    SYSTEMD_SUPPORTED=0
     return
   fi
 
@@ -41,19 +49,18 @@ install_os_packages() {
   exit 1
 }
 
-install_python_requirements() {
-  if python3 -m pip install -r "${ROOT_DIR}/requirements.txt"; then
-    return
-  fi
-
-  echo "Retrying pip install with --break-system-packages."
-  python3 -m pip install --break-system-packages -r "${ROOT_DIR}/requirements.txt"
+install_python_environment() {
+  python3 -m venv "${VENV_DIR}"
+  "${VENV_DIR}/bin/python" -m pip install --upgrade pip setuptools wheel
+  "${VENV_DIR}/bin/python" -m pip install -r "${ROOT_DIR}/requirements.txt"
 }
 
 prepare_runtime_files() {
   chmod 755 "${ROOT_DIR}/start_https.sh"
+  chmod 755 "${ROOT_DIR}/start_http.sh"
   install -d -m 755 -o "${SERVICE_USER}" -g "${SERVICE_GROUP}" "${ROOT_DIR}/.certs"
   chown -R "${SERVICE_USER}:${SERVICE_GROUP}" "${ROOT_DIR}/.certs"
+  chown -R "${SERVICE_USER}:${SERVICE_GROUP}" "${VENV_DIR}"
 
   if [[ ! -f "${ROOT_DIR}/profiles.json" ]]; then
     install -m 664 -o "${SERVICE_USER}" -g "${SERVICE_GROUP}" /dev/null "${ROOT_DIR}/profiles.json"
@@ -64,8 +71,6 @@ prepare_runtime_files() {
 }
 
 install_systemd_service() {
-  require_command systemctl
-
   if [[ ! -f "${SERVICE_TEMPLATE}" ]]; then
     echo "Missing service template: ${SERVICE_TEMPLATE}" >&2
     exit 1
@@ -89,12 +94,29 @@ main() {
   run_as_root "$@"
   install_os_packages
   require_command python3
-  install_python_requirements
+  install_python_environment
   prepare_runtime_files
+  if [[ "${SKIP_SYSTEMD}" == "1" ]]; then
+    echo
+    echo "Setup complete in container mode."
+    echo "Start the app with: /bin/bash ${ROOT_DIR}/start_https.sh"
+    return
+  fi
+
+  if [[ "${SYSTEMD_SUPPORTED}" != "1" ]] || ! systemd_available; then
+    echo
+    echo "Setup complete."
+    echo "A systemd service was not created in this environment."
+    echo "Python dependencies were installed in: ${VENV_DIR}"
+    echo "Start the app with: /bin/bash ${ROOT_DIR}/start_https.sh"
+    return
+  fi
+
   install_systemd_service
 
   echo
   echo "Setup complete."
+  echo "Python dependencies were installed in: ${VENV_DIR}"
   echo "Service: ${SERVICE_NAME}.service"
   echo "Check status with: sudo systemctl status ${SERVICE_NAME}.service"
   echo "View logs with: sudo journalctl -u ${SERVICE_NAME}.service -f"
