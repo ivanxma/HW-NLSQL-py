@@ -54,7 +54,11 @@ install_ubuntu_packages() {
   require_command apt-get
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
-  apt-get install -y python3 python3-venv python3-full openssl
+  if command -v debconf-set-selections >/dev/null 2>&1; then
+    printf 'iptables-persistent iptables-persistent/autosave_v4 boolean true\n' | debconf-set-selections
+    printf 'iptables-persistent iptables-persistent/autosave_v6 boolean true\n' | debconf-set-selections
+  fi
+  apt-get install -y python3 python3-venv python3-full openssl iptables-persistent
 }
 
 install_ol8_packages() {
@@ -137,13 +141,31 @@ install_systemd_service() {
 }
 
 configure_ubuntu_firewall() {
-  if ! command -v ufw >/dev/null 2>&1; then
+  if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "^Status: active"; then
+    ufw allow "${APP_PORT}/tcp"
+    echo "Opened port ${APP_PORT}/tcp in ufw."
     return
   fi
 
-  if ufw status | grep -q "^Status: active"; then
-    ufw allow "${APP_PORT}/tcp"
-    echo "Opened port ${APP_PORT}/tcp in ufw."
+  if ! command -v iptables >/dev/null 2>&1; then
+    echo "Neither ufw nor iptables is available to open port ${APP_PORT}/tcp." >&2
+    return
+  fi
+
+  if ! iptables -C INPUT -p tcp --dport "${APP_PORT}" -j ACCEPT >/dev/null 2>&1; then
+    iptables -I INPUT 1 -p tcp --dport "${APP_PORT}" -j ACCEPT
+    echo "Opened port ${APP_PORT}/tcp in iptables."
+  fi
+
+  if command -v netfilter-persistent >/dev/null 2>&1; then
+    netfilter-persistent save
+    return
+  fi
+
+  if command -v iptables-save >/dev/null 2>&1; then
+    install -d -m 755 /etc/iptables
+    iptables-save > /etc/iptables/rules.v4
+    echo "Saved iptables rules to /etc/iptables/rules.v4."
   fi
 }
 

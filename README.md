@@ -51,7 +51,8 @@ The setup script:
 - creates `.venv` in the project directory
 - installs the Python packages from `requirements.txt` into that virtual environment
 - creates and starts `hw-nlsql-https.service` on port `443` when `systemd` is available
-- opens `443/tcp` in `ufw` or `firewalld` when those firewalls are active
+- on Ubuntu, opens `443/tcp` in `ufw` when active, or adds and persists an `iptables` allow rule with `iptables-persistent`
+- on Oracle Linux, opens `443/tcp` in `firewalld` when active
 - keeps SELinux aligned for HTTPS, and adjusts the SELinux port label if you run on a non-default HTTP/S port
 - falls back to direct startup instructions only when `systemd` is not available
 
