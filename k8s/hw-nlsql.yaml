@@ -108,9 +108,13 @@ metadata:
 spec:
   selector:
     app: hw-nlsql
+  # Uncomment and set this if your Kubernetes/cloud provider supports
+  # reserving a specific public IP for a LoadBalancer service.
+  # loadBalancerIP: 203.0.113.10
+  externalTrafficPolicy: Cluster
   ports:
     - name: https
       port: 443
       targetPort: https
       protocol: TCP
-  type: ClusterIP
+  type: LoadBalancer
