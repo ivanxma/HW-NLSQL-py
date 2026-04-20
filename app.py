@@ -1,6 +1,8 @@
 import base64
+from datetime import datetime, timezone
 import json
 import os
+import time
 from functools import wraps
 from pathlib import Path
 
@@ -33,12 +35,60 @@ NAV_GROUPS = [
     {
         "label": "HeatWave",
         "items": [
-            {"endpoint": "nlsql_page", "label": "HWnlsql"},
+            {"endpoint": "nlsql_page", "label": "NL_SQL"},
             {"endpoint": "vision_page", "label": "HWVision"},
         ],
     },
 ]
-
+HEATWAVE_PERFORMANCE_SQL = {
+    "innodb": """
+SELECT /*+ SET_VAR(use_secondary_engine=off) */ airline.airlinename, SUM(booking.price) as price_tickets, count(*) as nb_tickets
+      FROM airportdb.booking booking, airportdb.flight flight, airportdb.airline airline, airportdb.airport_geo airport_geo
+      WHERE booking.flight_id=flight.flight_id
+      AND airline.airline_id=flight.airline_id
+      AND flight.from=airport_geo.airport_id
+      AND airport_geo.country = "UNITED STATES"
+      GROUP BY airline.airlinename
+      ORDER BY nb_tickets desc, airline.airlinename
+      LIMIT 10;
+""".strip(),
+    "rapid": """
+SELECT /*+ SET_VAR(use_secondary_engine=on) */ airline.airlinename, SUM(booking.price) as price_tickets, count(*) as nb_tickets
+      FROM airportdb.booking booking, airportdb.flight flight, airportdb.airline airline, airportdb.airport_geo airport_geo
+      WHERE booking.flight_id=flight.flight_id
+      AND airline.airline_id=flight.airline_id
+      AND flight.from=airport_geo.airport_id
+      AND airport_geo.country = "UNITED STATES"
+      GROUP BY airline.airlinename
+      ORDER BY nb_tickets desc, airline.airlinename
+      LIMIT 10;
+""".strip(),
+}
+HEATWAVE_PERFORMANCE_EXEC_SQL = {
+    "innodb": """
+SELECT /*+ SET_VAR(use_secondary_engine=off) */ airline.airlinename, SUM(booking.price) as price_tickets, count(*) as nb_tickets
+      FROM airportdb.booking booking, airportdb.flight flight, airportdb.airline airline, airportdb.airport_geo airport_geo
+      WHERE booking.flight_id=flight.flight_id
+      AND airline.airline_id=flight.airline_id
+      AND flight.from=airport_geo.airport_id
+      AND airport_geo.country = "UNITED STATES"
+      GROUP BY airline.airlinename
+      ORDER BY nb_tickets desc, airline.airlinename
+      LIMIT 10
+""".strip(),
+    "rapid": """
+SELECT /*+ SET_VAR(use_secondary_engine=on) */ airline.airlinename, SUM(booking.price) as price_tickets, count(*) as nb_tickets
+      FROM airportdb.booking booking, airportdb.flight flight, airportdb.airline airline, airportdb.airport_geo airport_geo
+      WHERE booking.flight_id=flight.flight_id
+      AND airline.airline_id=flight.airline_id
+      AND flight.from=airport_geo.airport_id
+      AND airport_geo.country = "UNITED STATES"
+      GROUP BY airline.airlinename
+      ORDER BY nb_tickets desc, airline.airlinename
+      LIMIT 10
+""".strip(),
+}
+PREFERRED_DEFAULT_MODEL = "meta.llama-3.3-70b-instruct"
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("FLASK_SECRET_KEY", "change-this-secret-key")
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
@@ -175,15 +225,20 @@ def get_connection_config(user=None, password=None, include_database=True):
     return config
 
 
-def mysql_connection(config=None):
-    return mysql.connector.connect(**(config or get_connection_config()))
+def mysql_connection(config=None, *, autocommit=False):
+    cnx = mysql.connector.connect(**(config or get_connection_config()))
+    cnx.autocommit = bool(autocommit)
+    return cnx
 
 
-def run_sql(sql_text, params=None, *, include_database=True):
+def run_sql(sql_text, params=None, *, include_database=True, autocommit=False):
     cnx = None
     cursor = None
     try:
-        cnx = mysql_connection(get_connection_config(include_database=include_database))
+        cnx = mysql_connection(
+            get_connection_config(include_database=include_database),
+            autocommit=autocommit,
+        )
         cursor = cnx.cursor()
         cursor.execute(sql_text, params or ())
         return cursor.fetchall()
@@ -194,11 +249,14 @@ def run_sql(sql_text, params=None, *, include_database=True):
             cnx.close()
 
 
-def exec_sql(sql_text, params=None, *, include_database=True):
+def exec_sql(sql_text, params=None, *, include_database=True, autocommit=False):
     cnx = None
     cursor = None
     try:
-        cnx = mysql_connection(get_connection_config(include_database=include_database))
+        cnx = mysql_connection(
+            get_connection_config(include_database=include_database),
+            autocommit=autocommit,
+        )
         cursor = cnx.cursor()
         cursor.execute(sql_text, params or ())
         cnx.commit()
@@ -207,6 +265,27 @@ def exec_sql(sql_text, params=None, *, include_database=True):
         if cnx:
             cnx.rollback()
         raise
+    finally:
+        if cursor:
+            cursor.close()
+        if cnx and cnx.is_connected():
+            cnx.close()
+
+
+def run_sql_with_columns(sql_text, params=None, *, include_database=True, autocommit=False):
+    cnx = None
+    cursor = None
+    try:
+        cnx = mysql_connection(
+            get_connection_config(include_database=include_database),
+            autocommit=autocommit,
+        )
+        cursor = cnx.cursor()
+        cursor.execute(sql_text, params or ())
+        return {
+            "columns": list(cursor.column_names or ()),
+            "rows": [list(row) for row in cursor.fetchall()],
+        }
     finally:
         if cursor:
             cursor.close()
@@ -355,6 +434,12 @@ def _get_model_ids(query):
     return [row[0] for row in rows]
 
 
+def choose_default_model(models):
+    if PREFERRED_DEFAULT_MODEL in models:
+        return PREFERRED_DEFAULT_MODEL
+    return models[0] if models else ""
+
+
 def get_generation_models():
     return _get_model_ids(
         """
@@ -373,6 +458,47 @@ def get_vision_models():
     return get_generation_models()
 
 
+def _mysql_quote(value):
+    text = str(value or "")
+    return "'" + text.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def airportdb_exists(*, autocommit=False):
+    rows = run_sql(
+        """
+        select schema_name as schema_name_value
+        from information_schema.schemata
+        where schema_name = %s
+        """,
+        ("airportdb",),
+        include_database=False,
+        autocommit=autocommit,
+    )
+    return bool(rows)
+
+
+def build_nav_groups():
+    groups = []
+    show_performance = False
+    if session.get("logged_in"):
+        try:
+            show_performance = airportdb_exists()
+        except mysql.connector.Error:
+            show_performance = False
+
+    for group in NAV_GROUPS:
+        items = [dict(item) for item in group["items"]]
+        if group["label"] == "HeatWave" and show_performance:
+            items.append(
+                {
+                    "endpoint": "heatwave_performance_page",
+                    "label": "HeatWave Performance",
+                }
+            )
+        groups.append({"label": group["label"], "items": items})
+    return groups
+
+
 def call_nlsql(question, model_id, schemas):
     dblist = ", ".join('"{}"'.format(schema_name) for schema_name in schemas)
     options = '{{"execute": true, "model_id": "{llm}", "schemas": [{schemas}]}}'.format(
@@ -380,6 +506,24 @@ def call_nlsql(question, model_id, schemas):
         schemas=dblist,
     )
     return call_proc("sys.NL_SQL", [question, "", options])
+
+
+def build_nlsql_call_text(question, model_id, schemas):
+    dblist = ", ".join('"{}"'.format(schema_name) for schema_name in schemas)
+    options = '{{"execute": true, "model_id": "{llm}", "schemas": [{schemas}]}}'.format(
+        llm=model_id,
+        schemas=dblist,
+    )
+    return (
+        "CALL sys.NL_SQL(\n"
+        "  {question},\n"
+        "  '',\n"
+        "  {options}\n"
+        ");"
+    ).format(
+        question=_mysql_quote(question),
+        options=_mysql_quote(options),
+    )
 
 
 def build_nlsql_tables(result):
@@ -413,7 +557,7 @@ def render_dashboard(template_name, **context):
     return render_template(
         template_name,
         app_title=APP_TITLE,
-        nav_groups=NAV_GROUPS,
+        nav_groups=build_nav_groups(),
         current_user=session.get("db_user", ""),
         current_profile_name=session.get("profile_name", ""),
         connection_summary=get_connection_summary(),
@@ -564,13 +708,13 @@ def nlsql_page():
     result_tables = []
     models = []
     selected_model = ""
+    proc_call_text = ""
 
     try:
         setup_db()
         available_databases = fetch_enabled_databases()
         models = get_nlsql_models()
-        if models:
-            selected_model = models[0]
+        selected_model = choose_default_model(models)
         default_databases = [
             name
             for name in ("information_schema", "performance_schema")
@@ -589,6 +733,7 @@ def nlsql_page():
             elif not selected_model:
                 flash("No supported generation models were found for this connection.", "error")
             else:
+                proc_call_text = build_nlsql_call_text(question, selected_model, selected_databases)
                 response = call_nlsql(question, selected_model, selected_databases)
                 output = json.loads(response.get("output") or "{}")
                 sql_text = output.get("sql_query", "")
@@ -612,6 +757,7 @@ def nlsql_page():
         llm_models=models,
         selected_model=selected_model,
         question=question,
+        proc_call_text=proc_call_text,
         sql_text=sql_text,
         table_names=table_names,
         result_tables=result_tables,
@@ -630,8 +776,7 @@ def vision_page():
 
     try:
         llm_models = get_vision_models()
-        if llm_models:
-            selected_model = llm_models[0]
+        selected_model = choose_default_model(llm_models)
 
         if request.method == "POST":
             question = request.form.get("question", "").strip()
@@ -668,6 +813,141 @@ def vision_page():
         question=question,
         answer=answer,
         preview_data_url=preview_data_url,
+    )
+
+
+def get_heatwave_performance_table_counts():
+    rows = run_sql_with_columns(
+        """
+        select 'booking' as table_name, count(*) as row_count from airportdb.booking
+        union all
+        select 'flight' as table_name, count(*) as row_count from airportdb.flight
+        union all
+        select 'airline' as table_name, count(*) as row_count from airportdb.airline
+        union all
+        select 'airport_geo' as table_name, count(*) as row_count from airportdb.airport_geo
+        """,
+        autocommit=True,
+    )
+    return [
+        {"table_name": row[0], "row_count": row[1]}
+        for row in rows["rows"]
+    ]
+
+
+def get_session_autocommit_value():
+    rows = run_sql(
+        "select @@session.autocommit as autocommit_value",
+        autocommit=True,
+    )
+    return rows[0][0] if rows else None
+
+
+def explain_heatwave_performance_query(sql_text):
+    raw_plan = run_sql_with_columns("EXPLAIN " + sql_text, autocommit=True)
+    formatted_rows = []
+    for row in raw_plan["rows"]:
+        formatted_row = []
+        for value in row:
+            cell_value = value
+            is_multiline = False
+            if isinstance(value, str):
+                try:
+                    parsed_json = json.loads(value)
+                except json.JSONDecodeError:
+                    parsed_json = None
+                if isinstance(parsed_json, (dict, list)):
+                    cell_value = json.dumps(parsed_json, indent=2)
+                    is_multiline = True
+            formatted_row.append({"value": cell_value, "is_multiline": is_multiline})
+        formatted_rows.append(formatted_row)
+    return {
+        "columns": raw_plan["columns"],
+        "rows": formatted_rows,
+    }
+
+
+def execute_heatwave_performance_query(sql_text):
+    cnx = None
+    cursor = None
+    try:
+        cnx = mysql_connection(autocommit=True)
+        cursor = cnx.cursor()
+        cursor.execute("select @@session.autocommit as autocommit_value")
+        autocommit_value = cursor.fetchone()[0]
+        started_at = datetime.now(timezone.utc)
+        started_counter = time.perf_counter()
+        cursor.execute(sql_text)
+        rows = [list(row) for row in cursor.fetchall()]
+        finished_counter = time.perf_counter()
+        finished_at = datetime.now(timezone.utc)
+        elapsed_seconds = (finished_at - started_at).total_seconds()
+        return {
+            "columns": list(cursor.column_names or ()),
+            "rows": rows,
+        }, {
+            "started_at": started_at,
+            "finished_at": finished_at,
+            "elapsed_seconds": elapsed_seconds,
+            "elapsed_perf_seconds": finished_counter - started_counter,
+        }, autocommit_value
+    finally:
+        if cursor:
+            cursor.close()
+        if cnx and cnx.is_connected():
+            cnx.close()
+
+
+@app.route("/heatwave-performance", methods=["GET", "POST"])
+@login_required
+def heatwave_performance_page():
+    active_tab = request.values.get("tab", "innodb").strip().lower()
+    if active_tab not in HEATWAVE_PERFORMANCE_SQL:
+        active_tab = "innodb"
+    sql_text = HEATWAVE_PERFORMANCE_SQL[active_tab]
+
+    try:
+        if not airportdb_exists(autocommit=True):
+            flash("The HeatWave Performance page is available only when schema `airportdb` exists.", "warning")
+            return redirect(url_for("home"))
+
+        table_counts = get_heatwave_performance_table_counts()
+        result_table = {"columns": [], "rows": []}
+        execution_timing = None
+        query_executed = False
+        autocommit_value = get_session_autocommit_value()
+        explain_plan = {"columns": [], "rows": []}
+
+        if request.method == "POST":
+            sql_text = request.form.get("sql_text", "").strip() or sql_text
+            result_table, execution_timing, autocommit_value = execute_heatwave_performance_query(sql_text)
+            query_executed = True
+            explain_plan = explain_heatwave_performance_query(sql_text)
+    except mysql.connector.Error as error:
+        flash(str(error), "error")
+        table_counts = []
+        explain_plan = {"columns": [], "rows": []}
+        result_table = {"columns": [], "rows": []}
+        execution_timing = None
+        query_executed = request.method == "POST"
+        autocommit_value = None
+
+    return render_dashboard(
+        "heatwave_performance.html",
+        page_title="HeatWave Performance",
+        active_tab=active_tab,
+        active_tab_label="InnoDB" if active_tab == "innodb" else "RAPID engine",
+        tabs=[
+            {"id": "innodb", "label": "InnoDB"},
+            {"id": "rapid", "label": "RAPID engine"},
+        ],
+        sql_text=sql_text,
+        explain_plan=explain_plan,
+        table_counts=table_counts,
+        result_table=result_table,
+        execution_timing=execution_timing,
+        query_executed=query_executed,
+        autocommit_value=autocommit_value,
     )
 
 

@@ -8,7 +8,7 @@
   <a class="doc-link" href="{{ docs_url }}" target="_blank" rel="noreferrer">Open NL_SQL documentation</a>
 </section>
 
-<form method="post" class="split-layout">
+<form method="post" class="split-layout" id="nlsql-form">
   <article class="panel">
     <h3>Prompt</h3>
     <label>
@@ -24,7 +24,7 @@
       </select>
     </label>
     <div class="form-actions">
-      <button class="button primary" type="submit">Submit</button>
+      <button class="button primary" type="submit" id="nlsql-submit-button">Submit</button>
     </div>
   </article>
 
@@ -43,12 +43,20 @@
   </article>
 </form>
 
-{% if sql_text or table_names %}
+{% if proc_call_text or sql_text or table_names %}
 <section class="panel result-panel">
+  {% if proc_call_text %}
+  <h3>CALL sys.NL_SQL</h3>
+  <textarea rows="8" readonly>{{ proc_call_text }}</textarea>
+  {% endif %}
+  {% if sql_text %}
   <h3>Generated SQL</h3>
   <textarea rows="8" readonly>{{ sql_text }}</textarea>
+  {% endif %}
+  {% if table_names %}
   <h3>Referenced Tables</h3>
   <textarea rows="4" readonly>{{ table_names }}</textarea>
+  {% endif %}
 </section>
 {% endif %}
 
@@ -77,4 +85,25 @@
   </div>
 </section>
 {% endfor %}
+
+<script>
+  (() => {
+    const form = document.getElementById("nlsql-form");
+    const submitButton = document.getElementById("nlsql-submit-button");
+    document.body.classList.remove("page-busy");
+    window.addEventListener("pageshow", () => {
+      document.body.classList.remove("page-busy");
+      if (submitButton) {
+        submitButton.disabled = false;
+      }
+    });
+    if (!form || !submitButton) {
+      return;
+    }
+    form.addEventListener("submit", () => {
+      submitButton.disabled = true;
+      document.body.classList.add("page-busy");
+    });
+  })();
+</script>
 {% endblock %}

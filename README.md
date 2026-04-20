@@ -6,6 +6,7 @@ This application now uses Flask instead of Streamlit while preserving the same c
 - maintain `nlsql.configdb`
 - run HeatWave `sys.NL_SQL`
 - run HeatWave visual prompts with `sys.ML_GENERATE`
+- compare InnoDB and RAPID execution on `airportdb`
 
 ## Install
 
@@ -117,6 +118,24 @@ The Kubernetes manifest creates the `Secret`, `ConfigMap`, `Deployment`, and `Lo
 2. Create or select a saved connection profile on the login page.
 3. Log in with the database user and password for that profile.
 4. Open `Admin > Setup configdb` and choose the schemas NL_SQL should use.
-5. Use `HeatWave > HWnlsql` or `HeatWave > HWVision`.
+5. Use `HeatWave > NL_SQL`, `HeatWave > HWVision`, or `HeatWave > HeatWave Performance`.
 
 Profiles are stored in `profiles.json`. Only non-secret connection details are stored there.
+
+## Page Notes
+
+### NL_SQL
+
+- The `Submit` button is disabled while a request is running.
+- The pointer changes to a wait cursor until the response returns.
+- The page shows the full `CALL sys.NL_SQL(...)` syntax for the submitted request, followed by the generated SQL and result sets.
+
+### HeatWave Performance
+
+- The menu item appears only when schema `airportdb` exists.
+- The page uses two tabs: `InnoDB` and `RAPID engine`.
+- Opening or switching tabs only loads the SQL text and metadata. It does not execute the SQL.
+- Clicking `Execute` runs the current editable SQL, switches the cursor to wait, and shows `Status : Running` while the request is in flight.
+- The page forces the session to `autocommit=1` for this workload and displays the current session autocommit value.
+- The page shows row counts for `airportdb.booking`, `airportdb.flight`, `airportdb.airline`, and `airportdb.airport_geo`.
+- The `EXPLAIN` output is produced only after `Execute` is clicked and JSON plan values are formatted for readability.
