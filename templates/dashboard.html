@@ -117,6 +117,14 @@
               <dt>Default Database</dt>
               <dd>{{ server_info.default_database }}</dd>
             </div>
+            <div>
+              <dt>MySQL Version</dt>
+              <dd>{{ server_info.server_version }}</dd>
+            </div>
+            <div>
+              <dt>Uptime</dt>
+              <dd>{{ server_info.uptime }}</dd>
+            </div>
           </dl>
         </article>
 
@@ -255,6 +263,38 @@
           <p class="helper-text">No partial-load details available.</p>
           {% endif %}
         </article>
+      </section>
+
+      <section class="panel">
+        <h3>HeatWave Loaded Tables</h3>
+        {% if heatwave.loaded_tables.columns %}
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                {% for column in heatwave.loaded_tables.columns %}
+                <th>{{ column }}</th>
+                {% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in heatwave.loaded_tables.rows %}
+              <tr>
+                {% for value in row %}
+                <td>{{ value }}</td>
+                {% endfor %}
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="{{ heatwave.loaded_tables.columns|length if heatwave.loaded_tables.columns else 1 }}">No loaded table metadata available.</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="helper-text">No loaded table metadata available.</p>
+        {% endif %}
       </section>
 
       {% if heatwave.notes %}

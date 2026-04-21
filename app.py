@@ -542,6 +542,25 @@ def _format_progress(value):
     return f"{value:.1f}%"
 
 
+def _format_uptime(seconds):
+    try:
+        total_seconds = int(float(seconds or 0))
+    except (TypeError, ValueError):
+        return str(seconds or "-")
+    days, remainder = divmod(total_seconds, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, secs = divmod(remainder, 60)
+    parts = []
+    if days:
+        parts.append(f"{days}d")
+    if days or hours:
+        parts.append(f"{hours}h")
+    if days or hours or minutes:
+        parts.append(f"{minutes}m")
+    parts.append(f"{secs}s")
+    return " ".join(parts)
+
+
 def _table_exists(schema_name, table_name):
     rows = run_sql(
         """
@@ -605,6 +624,8 @@ def get_dashboard_server_info():
         "connection_endpoint": "{host}:{port}".format(**profile),
         "default_database": profile["database"] or "-",
         "user": session.get("db_user", "") or "-",
+        "server_version": "-",
+        "uptime": "-",
         "database_rows": [],
         "summary": {
             "database_count": 0,
@@ -625,11 +646,40 @@ def get_dashboard_server_info():
             "fully_loaded_count": None,
             "partially_loaded_count": None,
             "nodes_table": {"columns": [], "rows": []},
+            "loaded_tables": {"columns": [], "rows": []},
             "partial_tables": {"columns": [], "rows": []},
             "notes": [],
         },
         "errors": [],
     }
+
+    version_rows = run_sql(
+        """
+        select
+            @@version as server_version,
+            cast(variable_value as unsigned) as uptime_seconds
+        from performance_schema.global_status
+        where variable_name = 'Uptime'
+        """,
+        include_database=False,
+    )
+    if version_rows:
+        info["server_version"] = version_rows[0][0] or "-"
+        info["uptime"] = _format_uptime(version_rows[0][1])
+    else:
+        fallback_rows = run_sql(
+            """
+            select
+                @@version as server_version,
+                cast(variable_value as unsigned) as uptime_seconds
+            from information_schema.global_status
+            where variable_name = 'Uptime'
+            """,
+            include_database=False,
+        )
+        if fallback_rows:
+            info["server_version"] = fallback_rows[0][0] or "-"
+            info["uptime"] = _format_uptime(fallback_rows[0][1])
 
     database_rows = run_sql(
         """
@@ -687,10 +737,11 @@ def get_dashboard_server_info():
     heatwave = info["heatwave"]
     has_rpd_nodes = _table_exists("performance_schema", "rpd_nodes")
     has_rpd_tables = _table_exists("performance_schema", "rpd_tables")
-    heatwave["available"] = has_rpd_nodes or has_rpd_tables
+    has_rpd_table_id = _table_exists("performance_schema", "rpd_table_id")
+    heatwave["available"] = has_rpd_nodes or has_rpd_tables or has_rpd_table_id
 
     if not heatwave["available"]:
-        heatwave["notes"].append("performance_schema.rpd_nodes and performance_schema.rpd_tables are not available on this server.")
+        heatwave["notes"].append("performance_schema.rpd_nodes, performance_schema.rpd_tables, and performance_schema.rpd_table_id are not available on this server.")
         return info
 
     if has_rpd_nodes:
@@ -831,6 +882,99 @@ def get_dashboard_server_info():
             heatwave["notes"].append("No load-progress column was exposed by performance_schema.rpd_tables.")
     else:
         heatwave["notes"].append("performance_schema.rpd_tables is not available.")
+
+    if has_rpd_tables and has_rpd_table_id:
+        table_id_columns = _get_table_columns("performance_schema", "rpd_table_id")
+        id_id_column = _pick_present_column(table_id_columns, ["id"])
+        id_name_column = _pick_present_column(table_id_columns, ["name"])
+        id_schema_column = _pick_present_column(table_id_columns, ["schema_name"])
+        id_table_name_column = _pick_present_column(table_id_columns, ["table_name"])
+
+        loaded_table_selects = []
+        loaded_labels = {}
+        loaded_formatters = {}
+
+        if table_id_column:
+            loaded_table_selects.append(
+                "t.{} as rpd_table_id".format(_quote_identifier(table_id_column))
+            )
+            loaded_labels["rpd_table_id"] = "RPD Table ID"
+        elif id_id_column:
+            loaded_table_selects.append(
+                "i.{} as rpd_table_id".format(_quote_identifier(id_id_column))
+            )
+            loaded_labels["rpd_table_id"] = "RPD Table ID"
+
+        if id_name_column:
+            loaded_table_selects.append(
+                "i.{} as table_name".format(_quote_identifier(id_name_column))
+            )
+            loaded_labels["table_name"] = "Table"
+        else:
+            if id_schema_column:
+                loaded_table_selects.append(
+                    "i.{} as schema_name".format(_quote_identifier(id_schema_column))
+                )
+                loaded_labels["schema_name"] = "Schema"
+            if id_table_name_column:
+                loaded_table_selects.append(
+                    "i.{} as short_table_name".format(_quote_identifier(id_table_name_column))
+                )
+                loaded_labels["short_table_name"] = "Table"
+
+        if status_column:
+            loaded_table_selects.append(
+                "t.{} as load_status".format(_quote_identifier(status_column))
+            )
+            loaded_labels["load_status"] = "Status"
+        if progress_column:
+            loaded_table_selects.append(
+                "t.{} as load_progress".format(_quote_identifier(progress_column))
+            )
+            loaded_labels["load_progress"] = "Load Progress"
+            loaded_formatters["load_progress"] = _format_progress
+        if type_column:
+            loaded_table_selects.append(
+                "t.{} as load_type".format(_quote_identifier(type_column))
+            )
+            loaded_labels["load_type"] = "Type"
+        if recovery_time_column:
+            loaded_table_selects.append(
+                "t.{} as recovery_time".format(_quote_identifier(recovery_time_column))
+            )
+            loaded_labels["recovery_time"] = "Recovery Time"
+        if duration_column:
+            loaded_table_selects.append(
+                "t.{} as duration".format(_quote_identifier(duration_column))
+            )
+            loaded_labels["duration"] = "Duration"
+
+        if loaded_table_selects and (table_id_column or id_id_column):
+            loaded_tables_query = """
+            select {columns}
+            from performance_schema.rpd_tables t
+            inner join performance_schema.rpd_table_id i
+                on i.{id_column} = t.{table_id_column}
+            order by i.{name_order}, t.{status_order}
+            """.format(
+                columns=", ".join(loaded_table_selects),
+                id_column=_quote_identifier(id_id_column or "ID"),
+                table_id_column=_quote_identifier(table_id_column or "ID"),
+                name_order=_quote_identifier(id_name_column or id_table_name_column or id_id_column or "ID"),
+                status_order=_quote_identifier(status_column or table_id_column or "ID"),
+            )
+            loaded_table_rows = run_sql_dicts(loaded_tables_query, include_database=False)
+            loaded_table_keys = [item.split(" as ", 1)[1] for item in loaded_table_selects]
+            heatwave["loaded_tables"] = _build_table_model(
+                loaded_table_rows,
+                loaded_table_keys,
+                labels=loaded_labels,
+                formatters=loaded_formatters,
+            )
+        else:
+            heatwave["notes"].append("Unable to determine a stable join key between performance_schema.rpd_tables and performance_schema.rpd_table_id.")
+    elif has_rpd_tables and not has_rpd_table_id:
+        heatwave["notes"].append("performance_schema.rpd_table_id is not available, so loaded table names cannot be shown.")
 
     return info
 
@@ -987,6 +1131,8 @@ def home():
                 "connection_endpoint": get_connection_summary(),
                 "default_database": get_session_profile()["database"] or "-",
                 "user": session.get("db_user", "") or "-",
+                "server_version": "-",
+                "uptime": "-",
                 "database_rows": [],
                 "summary": {
                     "database_count_display": "0",
@@ -1002,6 +1148,7 @@ def home():
                     "fully_loaded_count": None,
                     "partially_loaded_count": None,
                     "nodes_table": {"columns": [], "rows": []},
+                    "loaded_tables": {"columns": [], "rows": []},
                     "partial_tables": {"columns": [], "rows": []},
                     "notes": [],
                 },
