@@ -114,6 +114,41 @@ The Kubernetes manifest creates the `Secret`, `ConfigMap`, `Deployment`, and `Lo
 
 ## Configure
 
+### OCI IAM Setup
+
+If this application runs on OCI Compute and needs to call OCI services by using instance principal authentication, create a Dynamic Group and the required IAM policies first.
+
+#### Create Dynamic Group `hw-genai-dg`
+
+In the OCI Console, open `Identity & Security > Domains > Default domain > Dynamic groups`, then create a Dynamic Group with:
+
+- Name: `hw-genai-dg`
+- Description: `Dynamic group for HeatWave GenAI application instances`
+- Matching rule: `ANY {instance.compartment.id = 'the ocid of the compartment', resource.compartment.id = 'the ocid of the compartment'}`
+
+Replace `the ocid of the compartment` with the actual compartment OCID.
+
+#### Create Policies
+
+Create a policy in the tenancy or in the target parent compartment and attach the following statements for compartment `hw-demo-compartment`:
+
+```text
+allow dynamic-group hw-genai-dg to read volume-family in compartment hw-demo-compartment
+allow dynamic-group hw-genai-dg to read instance-family in compartment hw-demo-compartment
+allow dynamic-group hw-genai-dg to read objectstorage-namespaces in tenancy
+allow dynamic-group hw-genai-dg to read buckets in compartment hw-demo-compartment
+allow dynamic-group hw-genai-dg to manage objects in compartment hw-demo-compartment
+allow dynamic-group hw-genai-dg to manage object-family in compartment hw-demo-compartment
+allow dynamic-group hw-genai-dg to read secret-bundles in compartment hw-demo-compartment
+allow dynamic-group hw-genai-dg to use generative-ai-chat in compartment hw-demo-compartment
+allow dynamic-group hw-genai-dg to use generative-ai-text-generation in compartment hw-demo-compartment
+allow dynamic-group hw-genai-dg to use generative-ai-text-summarization in compartment hw-demo-compartment
+allow dynamic-group hw-genai-dg to use generative-ai-text-embedding in compartment hw-demo-compartment
+allow dynamic-group hw-genai-dg to use generative-ai-model in compartment hw-demo-compartment
+```
+
+If you use different OCI names, replace `hw-genai-dg` and `hw-demo-compartment` with your actual Dynamic Group and compartment names. After creating the Dynamic Group and policies, allow a few minutes for IAM propagation before testing the application.
+
 1. Open the app.
 2. Create or select a saved connection profile on the login page.
 3. Log in with the database user and password for that profile.
