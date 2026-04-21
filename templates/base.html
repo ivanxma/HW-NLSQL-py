@@ -35,9 +35,19 @@
 
       <nav class="nav-groups">
         {% for group in nav_groups %}
-        <section class="nav-group">
-          <span class="nav-group-title">{{ group["label"] }}</span>
-          <div class="nav-links">
+        {% set group_id = "nav-group-" ~ loop.index %}
+        <section class="nav-group" data-nav-group>
+          <button
+            class="nav-group-toggle"
+            type="button"
+            aria-expanded="false"
+            aria-controls="{{ group_id }}"
+            data-nav-toggle
+          >
+            <span class="nav-group-title">{{ group["label"] }}</span>
+            <span class="nav-group-caret" aria-hidden="true"></span>
+          </button>
+          <div class="nav-links" id="{{ group_id }}" data-nav-links hidden>
             {% for item in group["items"] %}
             <a
               href="{{ url_for(item["endpoint"]) }}"
@@ -66,5 +76,62 @@
         {% block content %}{% endblock %}
       </main>
     </div>
+    {% if logged_in %}
+    <script>
+      (() => {
+        const storageKey = "hw-nlsql-open-nav-group";
+        const groups = Array.from(document.querySelectorAll("[data-nav-group]"));
+        if (!groups.length) {
+          return;
+        }
+
+        const setOpenGroup = (openGroup) => {
+          groups.forEach((group) => {
+            const button = group.querySelector("[data-nav-toggle]");
+            const links = group.querySelector("[data-nav-links]");
+            const isOpen = group === openGroup;
+            group.classList.toggle("open", isOpen);
+            if (button) {
+              button.setAttribute("aria-expanded", isOpen ? "true" : "false");
+            }
+            if (links) {
+              links.hidden = !isOpen;
+            }
+          });
+
+          if (!openGroup) {
+            window.sessionStorage.removeItem(storageKey);
+            return;
+          }
+
+          const links = openGroup.querySelector("[data-nav-links]");
+          if (links && links.id) {
+            window.sessionStorage.setItem(storageKey, links.id);
+          }
+        };
+
+        let initialGroup = null;
+        const savedGroupId = window.sessionStorage.getItem(storageKey);
+        if (savedGroupId) {
+          initialGroup = groups.find((group) => {
+            const links = group.querySelector("[data-nav-links]");
+            return links && links.id === savedGroupId;
+          }) || null;
+        }
+        setOpenGroup(initialGroup);
+
+        groups.forEach((group) => {
+          const button = group.querySelector("[data-nav-toggle]");
+          if (!button) {
+            return;
+          }
+          button.addEventListener("click", () => {
+            const isOpen = group.classList.contains("open");
+            setOpenGroup(isOpen ? null : group);
+          });
+        });
+      })();
+    </script>
+    {% endif %}
   </body>
 </html>

@@ -111,12 +111,22 @@ button {
 
 .nav-group {
   display: flex;
-  gap: 10px;
   align-items: center;
-  padding: 10px 14px;
   background: rgba(255, 253, 249, 0.82);
   border: 1px solid var(--line);
   border-radius: 999px;
+}
+
+.nav-group-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 10px 14px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
 }
 
 .nav-group-title {
@@ -126,10 +136,28 @@ button {
   text-transform: uppercase;
 }
 
+.nav-group-caret {
+  width: 9px;
+  height: 9px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(45deg) translateY(-1px);
+  transition: transform 0.18s ease;
+}
+
+.nav-group.open .nav-group-caret {
+  transform: rotate(225deg) translateY(-1px);
+}
+
 .nav-links {
-  display: flex;
+  display: none;
   flex-wrap: wrap;
   gap: 8px;
+  padding: 6px 14px 6px 0;
+}
+
+.nav-group.open .nav-links {
+  display: flex;
 }
 
 .nav-link {
