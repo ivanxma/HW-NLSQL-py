@@ -75,6 +75,48 @@ If `systemd` is not available, start the app directly:
 /bin/bash ./start_https.sh
 ```
 
+## AirportDB Loader
+
+The repository also includes helper scripts to install MySQL Shell Innovation and load the MySQL `airportdb` sample dump used by the HeatWave quickstart.
+
+OS-specific MySQL Shell installation scripts:
+
+- `OL8/install_mysql_shell_innovation.sh`
+- `OL9/install_mysql_shell_innovation.sh`
+- `ubuntu/install_mysql_shell_innovation.sh`
+
+The wrapper script [load_airportdb.sh](load_airportdb.sh) does the following:
+
+- detects the Linux distribution
+- installs `mysqlsh` with the matching script if `mysqlsh` is not already present
+- downloads `airport-db.tar.gz`
+- extracts it with `tar xvzf airport-db.tar.gz`
+- runs `util.loadDump("airport-db", {threads: 16, deferTableIndexes: "all", ignoreVersion: true})`
+- optionally calls `sys.heatwave_load` for schema `airportdb`
+
+Usage:
+
+```bash
+chmod +x load_airportdb.sh
+./load_airportdb.sh <mysql_user> <mysql_host_or_ip>
+```
+
+Optional environment variables:
+
+```bash
+LOAD_THREADS=16
+HEATWAVE_LOAD=1
+AIRPORTDB_ARCHIVE_PATH=/path/to/airport-db.tar.gz
+AIRPORTDB_EXTRACT_DIR=/path/to/airport-db
+MYSQLSH_BIN=/usr/bin/mysqlsh
+```
+
+Notes:
+
+- `mysqlsh` will prompt for the password interactively.
+- The script expects the extracted dump directory to be `airport-db` under the project root unless `AIRPORTDB_EXTRACT_DIR` is set.
+- `HEATWAVE_LOAD=0 ./load_airportdb.sh <mysql_user> <mysql_host_or_ip>` skips the final HeatWave load call.
+
 ## Kubernetes
 
 Deploy to Kubernetes in a dedicated `nlsql` namespace:
