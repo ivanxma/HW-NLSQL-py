@@ -20,6 +20,11 @@ DEFAULT_PROFILE = {
     "port": 3306,
     "database": "performance_schema",
 }
+SYSTEM_DATABASES = {"information_schema", "mysql", "performance_schema", "sys"}
+DASHBOARD_TABS = [
+    {"id": "demo", "label": "Demo"},
+    {"id": "server-info", "label": "Server Info"},
+]
 NAV_GROUPS = [
     {
         "label": "Home",
@@ -293,6 +298,16 @@ def run_sql_with_columns(sql_text, params=None, *, include_database=True, autoco
             cnx.close()
 
 
+def run_sql_dicts(sql_text, params=None, *, include_database=True, autocommit=False):
+    result = run_sql_with_columns(
+        sql_text,
+        params=params,
+        include_database=include_database,
+        autocommit=autocommit,
+    )
+    return [dict(zip(result["columns"], row)) for row in result["rows"]]
+
+
 def call_proc(proc_name, args):
     cnx = None
     cursor = None
@@ -440,6 +455,386 @@ def choose_default_model(models):
     return models[0] if models else ""
 
 
+def _quote_identifier(identifier):
+    return "`{}`".format(str(identifier).replace("`", "``"))
+
+
+def _pick_present_column(columns, candidates):
+    column_lookup = {column.lower(): column for column in columns}
+    for candidate in candidates:
+        resolved = column_lookup.get(candidate.lower())
+        if resolved:
+            return resolved
+    return ""
+
+
+def _pick_memory_columns(columns):
+    preferred = [
+        "memory_used",
+        "memory_usage",
+        "used_memory",
+        "total_memory",
+        "free_memory",
+        "memory_size",
+        "ram_size",
+        "ram_usage",
+    ]
+    matches = []
+    for candidate in preferred:
+        resolved = _pick_present_column(columns, [candidate])
+        if resolved and resolved not in matches:
+            matches.append(resolved)
+    for column in columns:
+        if "memory" in column.lower() and column not in matches:
+            matches.append(column)
+    return matches
+
+
+def _unique(values):
+    result = []
+    seen = set()
+    for value in values:
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
+
+
+def _normalize_progress(value):
+    if value in (None, ""):
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+    else:
+        text = str(value).strip().replace(",", "")
+        if text.endswith("%"):
+            text = text[:-1].strip()
+        try:
+            number = float(text)
+        except ValueError:
+            return None
+    if 0 <= number <= 1:
+        return number * 100
+    return number
+
+
+def _format_bytes(value):
+    try:
+        number = float(value or 0)
+    except (TypeError, ValueError):
+        return str(value or "0 B")
+    units = ["B", "KB", "MB", "GB", "TB", "PB"]
+    unit_index = 0
+    while number >= 1024 and unit_index < len(units) - 1:
+        number /= 1024
+        unit_index += 1
+    if unit_index == 0:
+        return f"{int(number)} {units[unit_index]}"
+    return f"{number:.2f} {units[unit_index]}"
+
+
+def _format_progress(value):
+    if value is None:
+        return "Unavailable"
+    if abs(value - round(value)) < 0.001:
+        return f"{int(round(value))}%"
+    return f"{value:.1f}%"
+
+
+def _table_exists(schema_name, table_name):
+    rows = run_sql(
+        """
+        select count(*) as row_count
+        from information_schema.tables
+        where table_schema = %s
+          and table_name = %s
+        """,
+        (schema_name, table_name),
+        include_database=False,
+    )
+    return bool(rows and rows[0][0])
+
+
+def _get_table_columns(schema_name, table_name):
+    rows = run_sql(
+        """
+        select column_name as column_name_value
+        from information_schema.columns
+        where table_schema = %s
+          and table_name = %s
+        order by ordinal_position
+        """,
+        (schema_name, table_name),
+        include_database=False,
+    )
+    return [row[0] for row in rows]
+
+
+def _build_table_model(rows, columns, *, labels=None, formatters=None):
+    labels = labels or {}
+    formatters = formatters or {}
+    return {
+        "columns": [labels.get(column, column) for column in columns],
+        "rows": [
+            [formatters.get(column, lambda value: value if value not in (None, "") else "-")(row.get(column)) for column in columns]
+            for row in rows
+        ],
+    }
+
+
+def _derive_cluster_status(node_rows, status_column):
+    if not node_rows:
+        return "No HeatWave nodes detected"
+    if not status_column:
+        return "HeatWave metadata available"
+    statuses = sorted(
+        {
+            str(row.get(status_column, "")).strip()
+            for row in node_rows
+            if str(row.get(status_column, "")).strip()
+        },
+        key=str.lower,
+    )
+    return ", ".join(statuses) if statuses else "HeatWave metadata available"
+
+
+def get_dashboard_server_info():
+    profile = get_session_profile()
+    info = {
+        "connection_endpoint": "{host}:{port}".format(**profile),
+        "default_database": profile["database"] or "-",
+        "user": session.get("db_user", "") or "-",
+        "database_rows": [],
+        "summary": {
+            "database_count": 0,
+            "table_count": 0,
+            "data_length": 0,
+            "index_length": 0,
+            "total_length": 0,
+            "database_count_display": "0",
+            "table_count_display": "0",
+            "data_length_display": "0 B",
+            "index_length_display": "0 B",
+            "total_length_display": "0 B",
+        },
+        "heatwave": {
+            "available": False,
+            "status": "HeatWave metadata not detected",
+            "node_count": 0,
+            "fully_loaded_count": None,
+            "partially_loaded_count": None,
+            "nodes_table": {"columns": [], "rows": []},
+            "partial_tables": {"columns": [], "rows": []},
+            "notes": [],
+        },
+        "errors": [],
+    }
+
+    database_rows = run_sql(
+        """
+        select
+            s.schema_name as database_name,
+            coalesce(stats.table_count, 0) as table_count,
+            coalesce(stats.data_length, 0) as data_length,
+            coalesce(stats.index_length, 0) as index_length
+        from information_schema.schemata s
+        left join (
+            select
+                table_schema,
+                count(*) as table_count,
+                coalesce(sum(data_length), 0) as data_length,
+                coalesce(sum(index_length), 0) as index_length
+            from information_schema.tables
+            where table_type = 'BASE TABLE'
+            group by table_schema
+        ) stats
+            on stats.table_schema = s.schema_name
+        order by s.schema_name
+        """,
+        include_database=False,
+    )
+    summary = info["summary"]
+    for database_name, table_count, data_length, index_length in database_rows:
+        total_length = int(data_length or 0) + int(index_length or 0)
+        is_system = database_name in SYSTEM_DATABASES
+        info["database_rows"].append(
+            {
+                "database_name": database_name,
+                "table_count": int(table_count or 0),
+                "data_length": int(data_length or 0),
+                "index_length": int(index_length or 0),
+                "total_length": total_length,
+                "data_length_display": _format_bytes(data_length),
+                "index_length_display": _format_bytes(index_length),
+                "total_length_display": _format_bytes(total_length),
+                "is_system": is_system,
+            }
+        )
+        if not is_system:
+            summary["database_count"] += 1
+            summary["table_count"] += int(table_count or 0)
+            summary["data_length"] += int(data_length or 0)
+            summary["index_length"] += int(index_length or 0)
+            summary["total_length"] += total_length
+
+    summary["database_count_display"] = str(summary["database_count"])
+    summary["table_count_display"] = str(summary["table_count"])
+    summary["data_length_display"] = _format_bytes(summary["data_length"])
+    summary["index_length_display"] = _format_bytes(summary["index_length"])
+    summary["total_length_display"] = _format_bytes(summary["total_length"])
+
+    heatwave = info["heatwave"]
+    has_rpd_nodes = _table_exists("performance_schema", "rpd_nodes")
+    has_rpd_tables = _table_exists("performance_schema", "rpd_tables")
+    heatwave["available"] = has_rpd_nodes or has_rpd_tables
+
+    if not heatwave["available"]:
+        heatwave["notes"].append("performance_schema.rpd_nodes and performance_schema.rpd_tables are not available on this server.")
+        return info
+
+    if has_rpd_nodes:
+        node_columns = _get_table_columns("performance_schema", "rpd_nodes")
+        node_id_column = _pick_present_column(
+            node_columns,
+            ["node_name", "node_id", "rpd_node_id", "host_name", "host", "address", "ip_address", "id"],
+        )
+        node_status_column = _pick_present_column(
+            node_columns,
+            ["status", "node_status", "health", "availability", "state"],
+        )
+        memory_columns = _pick_memory_columns(node_columns)
+        selected_node_columns = _unique([node_id_column, node_status_column] + memory_columns[:4])
+        if not selected_node_columns:
+            selected_node_columns = node_columns[: min(len(node_columns), 6)]
+        node_query = "select {} from {}.{}".format(
+            ", ".join(_quote_identifier(column) for column in selected_node_columns),
+            _quote_identifier("performance_schema"),
+            _quote_identifier("rpd_nodes"),
+        )
+        node_rows = run_sql_dicts(node_query, include_database=False)
+        node_count_rows = run_sql(
+            "select count(*) as node_count from performance_schema.rpd_nodes",
+            include_database=False,
+        )
+        heatwave["node_count"] = int(node_count_rows[0][0]) if node_count_rows else len(node_rows)
+        heatwave["status"] = _derive_cluster_status(node_rows, node_status_column)
+        heatwave["nodes_table"] = _build_table_model(
+            node_rows,
+            selected_node_columns,
+            labels={
+                node_id_column: "Node",
+                node_status_column: "Status",
+            },
+            formatters={column: _format_bytes for column in memory_columns},
+        )
+        if not memory_columns:
+            heatwave["notes"].append("No memory-related columns were exposed by performance_schema.rpd_nodes.")
+    else:
+        heatwave["notes"].append("performance_schema.rpd_nodes is not available.")
+
+    if has_rpd_tables:
+        table_columns = _get_table_columns("performance_schema", "rpd_tables")
+        schema_column = _pick_present_column(
+            table_columns,
+            ["table_schema", "schema_name", "database_name", "db_name"],
+        )
+        table_name_column = _pick_present_column(
+            table_columns,
+            ["table_name", "name"],
+        )
+        table_id_column = _pick_present_column(
+            table_columns,
+            ["rpd_table_id", "table_id", "id"],
+        )
+        progress_column = _pick_present_column(
+            table_columns,
+            ["load_progress", "loading_progress", "load_percentage", "pct_loaded", "progress"],
+        )
+        status_column = _pick_present_column(
+            table_columns,
+            ["load_status", "loading_status", "status", "state"],
+        )
+        type_column = _pick_present_column(
+            table_columns,
+            ["load_type", "loading_type", "type"],
+        )
+        recovery_time_column = _pick_present_column(
+            table_columns,
+            ["recovery_time", "last_recovery_time", "recovery_start_time", "load_start_time"],
+        )
+        duration_column = _pick_present_column(
+            table_columns,
+            ["recovery_duration", "load_duration", "duration", "elapsed_time"],
+        )
+        selected_table_columns = _unique(
+            [
+                schema_column,
+                table_name_column,
+                table_id_column,
+                status_column,
+                progress_column,
+                type_column,
+                recovery_time_column,
+                duration_column,
+            ]
+        )
+        if not selected_table_columns:
+            selected_table_columns = table_columns[: min(len(table_columns), 8)]
+        table_query = "select {} from {}.{}".format(
+            ", ".join(_quote_identifier(column) for column in selected_table_columns),
+            _quote_identifier("performance_schema"),
+            _quote_identifier("rpd_tables"),
+        )
+        table_rows = run_sql_dicts(table_query, include_database=False)
+        partial_rows = []
+        fully_loaded_count = 0
+        partially_loaded_count = 0
+        for row in table_rows:
+            progress_value = _normalize_progress(row.get(progress_column)) if progress_column else None
+            if progress_value is not None and progress_value >= 100:
+                fully_loaded_count += 1
+            elif progress_value is not None and 0 < progress_value < 100:
+                partially_loaded_count += 1
+                partial_rows.append(row)
+        heatwave["fully_loaded_count"] = fully_loaded_count if progress_column else None
+        heatwave["partially_loaded_count"] = partially_loaded_count if progress_column else None
+        partial_table_columns = _unique(
+            [
+                schema_column,
+                table_name_column,
+                table_id_column,
+                progress_column,
+                type_column,
+                recovery_time_column,
+                duration_column,
+                status_column,
+            ]
+        )
+        if partial_table_columns:
+            heatwave["partial_tables"] = _build_table_model(
+                partial_rows,
+                partial_table_columns,
+                labels={
+                    schema_column: "Schema",
+                    table_name_column: "Table",
+                    table_id_column: "RPD Table ID",
+                    progress_column: "Load Progress",
+                    type_column: "Type",
+                    recovery_time_column: "Recovery Time",
+                    duration_column: "Duration",
+                    status_column: "Status",
+                },
+                formatters={progress_column: _format_progress} if progress_column else {},
+            )
+        if not progress_column:
+            heatwave["notes"].append("No load-progress column was exposed by performance_schema.rpd_tables.")
+    else:
+        heatwave["notes"].append("performance_schema.rpd_tables is not available.")
+
+    return info
+
+
 def get_generation_models():
     return _get_model_ids(
         """
@@ -579,7 +974,46 @@ def redirect_for_profile_update(profile_name=""):
 def home():
     if not session.get("logged_in"):
         return redirect(url_for("login"))
-    return render_dashboard("dashboard.html", page_title="Dashboard")
+    active_tab = request.args.get("tab", "demo").strip().lower()
+    if active_tab not in {tab["id"] for tab in DASHBOARD_TABS}:
+        active_tab = "demo"
+    server_info = None
+    if active_tab == "server-info":
+        try:
+            server_info = get_dashboard_server_info()
+        except mysql.connector.Error as error:
+            flash(str(error), "error")
+            server_info = {
+                "connection_endpoint": get_connection_summary(),
+                "default_database": get_session_profile()["database"] or "-",
+                "user": session.get("db_user", "") or "-",
+                "database_rows": [],
+                "summary": {
+                    "database_count_display": "0",
+                    "table_count_display": "0",
+                    "data_length_display": "0 B",
+                    "index_length_display": "0 B",
+                    "total_length_display": "0 B",
+                },
+                "heatwave": {
+                    "available": False,
+                    "status": "Unable to query server metadata",
+                    "node_count": 0,
+                    "fully_loaded_count": None,
+                    "partially_loaded_count": None,
+                    "nodes_table": {"columns": [], "rows": []},
+                    "partial_tables": {"columns": [], "rows": []},
+                    "notes": [],
+                },
+                "errors": [str(error)],
+            }
+    return render_dashboard(
+        "dashboard.html",
+        page_title="Dashboard",
+        active_tab=active_tab,
+        tabs=DASHBOARD_TABS,
+        server_info=server_info,
+    )
 
 
 @app.route("/login", methods=["GET", "POST"])

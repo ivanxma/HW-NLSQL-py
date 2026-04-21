@@ -223,6 +223,17 @@ button {
   gap: 20px;
 }
 
+.ordered-list,
+.plain-list {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+.plain-list li + li,
+.ordered-list li + li {
+  margin-top: 8px;
+}
+
 .transfer-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 140px minmax(0, 1fr);
@@ -243,9 +254,87 @@ button {
   padding: 22px;
 }
 
+.dashboard-hero {
+  margin-bottom: 20px;
+}
+
+.dashboard-metrics {
+  margin-bottom: 20px;
+}
+
 .panel h3,
 .info-card h3 {
   margin-top: 0;
+}
+
+.metric-card p {
+  margin-bottom: 0;
+  color: var(--muted);
+}
+
+.metric-label {
+  display: block;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.metric-value {
+  display: block;
+  margin: 8px 0 10px;
+  font-size: clamp(1.8rem, 2vw, 2.6rem);
+  font-family: Georgia, "Times New Roman", serif;
+  color: var(--accent-dark);
+}
+
+.detail-list {
+  display: grid;
+  gap: 16px;
+  margin: 0;
+}
+
+.detail-list div {
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.detail-list div:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.detail-list dt {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.detail-list dd {
+  margin: 0;
+  font-size: 1.02rem;
+}
+
+.table-chip {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #ece3d8;
+  color: var(--accent-dark);
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.table-chip.muted {
+  background: #e6e0d8;
+  color: var(--muted);
 }
 
 .form-grid {
