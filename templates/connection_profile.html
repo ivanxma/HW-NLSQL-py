@@ -45,22 +45,22 @@
         Default database
         <input name="database" type="text" value="{{ form_profile.database }}">
       </label>
-      <div class="form-actions">
+      <div class="form-actions profile-actions">
         <button class="button primary" type="submit">Save Profile</button>
+        {% if form_profile.name %}
+        <button
+          class="button secondary danger"
+          type="submit"
+          formaction="{{ url_for('save_profile_route') }}"
+          formmethod="post"
+          name="profile_action"
+          value="delete"
+        >
+          Delete Profile
+        </button>
+        {% endif %}
       </div>
     </form>
-
-    {% if form_profile.name %}
-    <form method="post" action="{{ url_for('save_profile_route') }}" class="inline-form">
-      <input type="hidden" name="profile_action" value="delete">
-      <input type="hidden" name="return_to" value="connection_profile">
-      <input type="hidden" name="name" value="{{ form_profile.name }}">
-      <input type="hidden" name="host" value="{{ form_profile.host }}">
-      <input type="hidden" name="port" value="{{ form_profile.port }}">
-      <input type="hidden" name="database" value="{{ form_profile.database }}">
-      <button class="button secondary danger" type="submit">Delete Profile</button>
-    </form>
-    {% endif %}
   </article>
 </section>
 {% endblock %}

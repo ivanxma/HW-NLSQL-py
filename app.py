@@ -1,19 +1,27 @@
 import base64
+import csv
 from datetime import datetime, timezone
+import io
+from itertools import zip_longest
 import json
 import os
+import re
+import secrets
+import sys
 import time
 from functools import wraps
 from pathlib import Path
 
 import mysql.connector
-from flask import Flask, flash, redirect, render_template, request, session, url_for
+from openpyxl import load_workbook
+from flask import Flask, Response, flash, redirect, render_template, request, session, url_for
 from mysql.connector import errorcode
 
 
 APP_TITLE = "HeatWave Demo"
 ROOT_DIR = Path(__file__).resolve().parent
 PROFILE_STORE = ROOT_DIR / "profiles.json"
+IMPORT_PREVIEW_DIR = Path("/tmp/hw_nlsql_imports")
 DEFAULT_PROFILE = {
     "name": "",
     "host": "",
@@ -25,6 +33,31 @@ DASHBOARD_TABS = [
     {"id": "demo", "label": "Demo"},
     {"id": "server-info", "label": "Server Info"},
 ]
+DB_ADMIN_TABS = [
+    {"id": "db", "label": "DB"},
+    {"id": "table", "label": "Table"},
+    {"id": "hw-tables", "label": "HW Tables"},
+    {"id": "heatwave-performance-query", "label": "HeatWave Performance Query"},
+    {"id": "heatwave-ml-query", "label": "HeatWave ML Query"},
+    {"id": "hw-table-load-recovery", "label": "HW Table Load Recovery"},
+]
+MYSQL_TYPE_OPTIONS = [
+    {"name": "INT", "label": "INT", "param_mode": "none", "param_placeholder": ""},
+    {"name": "BIGINT", "label": "BIGINT", "param_mode": "none", "param_placeholder": ""},
+    {"name": "VARCHAR", "label": "VARCHAR", "param_mode": "single", "param_placeholder": "255"},
+    {"name": "CHAR", "label": "CHAR", "param_mode": "single", "param_placeholder": "36"},
+    {"name": "DECIMAL", "label": "DECIMAL", "param_mode": "multi", "param_placeholder": "10,3"},
+    {"name": "DATE", "label": "DATE", "param_mode": "none", "param_placeholder": ""},
+    {"name": "DATETIME", "label": "DATETIME", "param_mode": "none", "param_placeholder": ""},
+    {"name": "TIMESTAMP", "label": "TIMESTAMP", "param_mode": "none", "param_placeholder": ""},
+    {"name": "TEXT", "label": "TEXT", "param_mode": "none", "param_placeholder": ""},
+    {"name": "LONGTEXT", "label": "LONGTEXT", "param_mode": "none", "param_placeholder": ""},
+    {"name": "JSON", "label": "JSON", "param_mode": "none", "param_placeholder": ""},
+    {"name": "BOOLEAN", "label": "BOOLEAN", "param_mode": "none", "param_placeholder": ""},
+]
+MYSQL_TYPE_OPTION_MAP = {row["name"]: row for row in MYSQL_TYPE_OPTIONS}
+IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_$]+$")
+MYSQL_DATA_TYPE_RE = re.compile(r"^[A-Z]+(?:\s+[A-Z]+)?(?:\(\s*\d+(?:\s*,\s*\d+)?\s*\))?$")
 NAV_GROUPS = [
     {
         "label": "Home",
@@ -34,6 +67,8 @@ NAV_GROUPS = [
         "label": "Admin",
         "items": [
             {"endpoint": "connection_profile", "label": "Connection Profile"},
+            {"endpoint": "db_admin_page", "label": "DB Admin"},
+            {"endpoint": "import_page", "label": "Import"},
             {"endpoint": "setup_configdb_page", "label": "Setup configdb"},
         ],
     },
@@ -97,6 +132,7 @@ PREFERRED_DEFAULT_MODEL = "meta.llama-3.3-70b-instruct"
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("FLASK_SECRET_KEY", "change-this-secret-key")
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
+sys.modules.setdefault("app_context", sys.modules[__name__])
 
 
 def ensure_profile_store():
@@ -232,6 +268,7 @@ def get_connection_config(user=None, password=None, include_database=True):
 
 def mysql_connection(config=None, *, autocommit=False):
     cnx = mysql.connector.connect(**(config or get_connection_config()))
+    cnx.can_consume_results = True
     cnx.autocommit = bool(autocommit)
     return cnx
 
@@ -298,6 +335,51 @@ def run_sql_with_columns(sql_text, params=None, *, include_database=True, autoco
             cnx.close()
 
 
+def run_sql_multi_resultsets(sql_text, params=None, *, include_database=True, autocommit=False):
+    cnx = None
+    try:
+        if params:
+            raise ValueError("Parameterized multi-result SQL is not supported.")
+        cnx = mysql_connection(
+            get_connection_config(include_database=include_database),
+            autocommit=autocommit,
+        )
+        datasets = []
+        for result_index, result in enumerate(cnx.cmd_query_iter(sql_text), start=1):
+            if "columns" in result:
+                rows, _ = cnx.get_rows()
+                datasets.append(
+                    {
+                        "title": "Result Set {}".format(result_index),
+                        "columns": [str(column[0]) for column in result.get("columns", [])],
+                        "rows": [[_normalize_modal_cell(value) for value in row] for row in rows],
+                    }
+                )
+            else:
+                datasets.append(
+                    {
+                        "title": "Status {}".format(result_index),
+                        "columns": [str(key) for key in result.keys()],
+                        "rows": [[_normalize_modal_cell(value) for value in result.values()]],
+                    }
+                )
+        cnx.consume_results()
+        cnx.commit()
+        return datasets
+    except (mysql.connector.Error, ValueError):
+        if cnx:
+            cnx.rollback()
+        raise
+    finally:
+        if cnx and cnx.is_connected():
+            try:
+                cnx.consume_results()
+            except mysql.connector.Error:
+                pass
+        if cnx and cnx.is_connected():
+            cnx.close()
+
+
 def run_sql_dicts(sql_text, params=None, *, include_database=True, autocommit=False):
     result = run_sql_with_columns(
         sql_text,
@@ -330,6 +412,16 @@ def call_proc(proc_name, args):
             cursor.close()
         if cnx and cnx.is_connected():
             cnx.close()
+
+
+def _normalize_modal_cell(value):
+    if value is None:
+        return ""
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
 
 
 def login_required(route_handler):
@@ -542,6 +634,313 @@ def _format_progress(value):
     return f"{value:.1f}%"
 
 
+def _split_heatwave_object_name(raw_name):
+    normalized = str(raw_name or "").strip()
+    if not normalized:
+        return "", ""
+    cleaned = normalized.replace("`", "")
+    if "." in cleaned:
+        left, right = cleaned.split(".", 1)
+        return left.strip(), right.strip()
+    return "", cleaned.strip()
+
+
+def _derive_heatwave_row_class(progress_value, status_text="", error_text=""):
+    status_value = str(status_text or "").strip().lower()
+    error_value = str(error_text or "").strip()
+    if error_value or any(token in status_value for token in ("error", "fail", "abort")):
+        return "error"
+    if progress_value is not None and progress_value >= 100:
+        return "loaded"
+    return "partial"
+
+
+def _sanitize_import_column_name(value, index, seen_names):
+    text = str(value or "").strip()
+    if not text:
+        text = f"column_{index}"
+    normalized = re.sub(r"[^A-Za-z0-9_$]+", "_", text).strip("_")
+    if not normalized:
+        normalized = f"column_{index}"
+    if not re.match(r"^[A-Za-z_]", normalized):
+        normalized = f"column_{index}_{normalized}"
+    normalized = normalized[:64]
+    candidate = normalized
+    suffix = 1
+    while candidate.lower() in seen_names:
+        suffix_text = f"_{suffix}"
+        candidate = f"{normalized[: max(1, 64 - len(suffix_text))]}{suffix_text}"
+        suffix += 1
+    seen_names.add(candidate.lower())
+    return _validate_identifier(candidate, "Column name")
+
+
+def _normalize_import_cell(value):
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat(sep=" ", timespec="seconds")
+    text = str(value)
+    return text if text != "" else None
+
+
+def _read_csv_import(file_storage):
+    file_storage.stream.seek(0)
+    text_stream = io.TextIOWrapper(file_storage.stream, encoding="utf-8-sig", newline="")
+    try:
+        rows = [list(row) for row in csv.reader(text_stream)]
+    finally:
+        try:
+            text_stream.detach()
+        except Exception:
+            pass
+    return rows
+
+
+def _read_csv_import_path(file_path):
+    with open(file_path, "r", encoding="utf-8-sig", newline="") as handle:
+        return [list(row) for row in csv.reader(handle)]
+
+
+def _read_excel_import(file_storage):
+    file_storage.stream.seek(0)
+    workbook = load_workbook(file_storage.stream, read_only=True, data_only=True)
+    try:
+        worksheet = workbook.active
+        return [list(row) for row in worksheet.iter_rows(values_only=True)]
+    finally:
+        workbook.close()
+
+
+def _read_excel_import_path(file_path):
+    workbook = load_workbook(file_path, read_only=True, data_only=True)
+    try:
+        worksheet = workbook.active
+        return [list(row) for row in worksheet.iter_rows(values_only=True)]
+    finally:
+        workbook.close()
+
+
+def _normalize_import_dataset(rows, filename):
+    non_empty_rows = [
+        [None if value is None else value for value in row]
+        for row in rows
+        if any(str(value).strip() for value in row if value is not None)
+    ]
+    if not non_empty_rows:
+        raise ValueError("The selected file does not contain any rows.")
+
+    raw_headers = non_empty_rows[0]
+    data_rows = non_empty_rows[1:]
+    if not any(str(value).strip() for value in raw_headers if value is not None):
+        raise ValueError("The first row must contain column names.")
+
+    seen_names = set()
+    headers = [
+        _sanitize_import_column_name(value, index + 1, seen_names)
+        for index, value in enumerate(raw_headers)
+    ]
+    normalized_rows = []
+    for row in data_rows:
+        padded = list(row) + [None] * max(0, len(headers) - len(row))
+        normalized_rows.append([_normalize_import_cell(value) for value in padded[: len(headers)]])
+
+    return {
+        "filename": filename,
+        "headers": headers,
+        "rows": normalized_rows,
+        "row_count": len(normalized_rows),
+    }
+
+
+def _load_import_rows(file_storage):
+    filename = str(file_storage.filename or "").strip()
+    extension = Path(filename).suffix.lower()
+    if extension == ".csv":
+        rows = _read_csv_import(file_storage)
+    elif extension in {".xlsx", ".xlsm", ".xltx", ".xltm"}:
+        rows = _read_excel_import(file_storage)
+    else:
+        raise ValueError("Choose a CSV or Excel (.xlsx/.xlsm) file to import.")
+    return _normalize_import_dataset(rows, filename)
+
+
+def _ensure_import_preview_dir():
+    IMPORT_PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _save_import_preview_file(file_storage):
+    filename = str(file_storage.filename or "").strip()
+    extension = Path(filename).suffix.lower()
+    if extension not in {".csv", ".xlsx", ".xlsm", ".xltx", ".xltm"}:
+        raise ValueError("Choose a CSV or Excel (.xlsx/.xlsm) file to import.")
+    _ensure_import_preview_dir()
+    token = secrets.token_hex(16)
+    target_path = IMPORT_PREVIEW_DIR / f"{token}{extension}"
+    file_storage.stream.seek(0)
+    with open(target_path, "wb") as handle:
+        handle.write(file_storage.stream.read())
+    return token, target_path
+
+
+def _resolve_import_preview_path(token):
+    normalized = str(token or "").strip()
+    if not re.fullmatch(r"[0-9a-f]{32}", normalized):
+        raise ValueError("The loaded import preview is invalid or expired.")
+    _ensure_import_preview_dir()
+    matches = list(IMPORT_PREVIEW_DIR.glob(f"{normalized}.*"))
+    if not matches:
+        raise ValueError("The loaded import preview is invalid or expired.")
+    return matches[0]
+
+
+def _load_import_rows_from_path(token):
+    file_path = _resolve_import_preview_path(token)
+    extension = file_path.suffix.lower()
+    if extension == ".csv":
+        rows = _read_csv_import_path(file_path)
+    elif extension in {".xlsx", ".xlsm", ".xltx", ".xltm"}:
+        rows = _read_excel_import_path(file_path)
+    else:
+        raise ValueError("The loaded import preview is invalid or expired.")
+    return _normalize_import_dataset(rows, file_path.name)
+
+
+def _delete_import_preview_file(token):
+    try:
+        file_path = _resolve_import_preview_path(token)
+    except ValueError:
+        return
+    try:
+        file_path.unlink()
+    except OSError:
+        pass
+
+
+def _build_import_preview_table(import_payload, max_rows=50):
+    return {
+        "columns": list(import_payload.get("headers") or []),
+        "rows": [list(row) for row in list(import_payload.get("rows") or [])[:max_rows]],
+        "row_count": int(import_payload.get("row_count") or 0),
+        "preview_count": min(int(import_payload.get("row_count") or 0), max_rows),
+        "filename": str(import_payload.get("filename") or ""),
+    }
+
+
+def _infer_import_column_type(values):
+    non_empty = [str(value).strip() for value in values if value not in (None, "")]
+    if not non_empty:
+        return "VARCHAR(255)"
+    max_length = max(len(value) for value in non_empty)
+    if max_length <= 255:
+        return f"VARCHAR({max(1, min(255, max_length))})"
+    if max_length <= 65535:
+        return "TEXT"
+    return "LONGTEXT"
+
+
+def _build_import_table_columns(headers, rows):
+    columns = []
+    for index, header in enumerate(headers):
+        sample_values = [row[index] for row in rows]
+        columns.append(
+            {
+                "name": header,
+                "data_type": _infer_import_column_type(sample_values),
+                "nullable": True,
+                "primary": False,
+            }
+        )
+    return columns
+
+
+def import_file_to_table(
+    schema_name,
+    table_name,
+    import_payload,
+    *,
+    overwrite_existing=False,
+    create_new_table=False,
+    add_invisible_primary_key=False,
+):
+    database_name = _validate_identifier(schema_name, "Database name")
+    normalized_table_name = _validate_identifier(table_name, "Table name")
+    if not _database_exists(database_name):
+        raise ValueError(f"Database `{database_name}` does not exist.")
+    if _is_system_database(database_name):
+        raise ValueError("System databases cannot be modified.")
+    headers = list(import_payload.get("headers") or [])
+    rows = list(import_payload.get("rows") or [])
+    if not headers:
+        raise ValueError("The import file must include a header row.")
+
+    table_exists = _table_exists(database_name, normalized_table_name)
+    if table_exists and create_new_table:
+        raise ValueError(f"Table `{database_name}.{normalized_table_name}` already exists. Choose another table name.")
+
+    if not table_exists:
+        import_columns = _build_import_table_columns(headers, rows)
+        create_table(
+            database_name,
+            normalized_table_name,
+            import_columns,
+            add_invisible_auto_pk=add_invisible_primary_key,
+        )
+    else:
+        existing_columns = {row["column_name"].lower(): row["column_name"] for row in fetch_table_definition(database_name, normalized_table_name)}
+        missing_columns = [header for header in headers if header.lower() not in existing_columns]
+        if missing_columns:
+            raise ValueError(
+                "Import file columns were not found in the existing table: {}.".format(", ".join(missing_columns))
+            )
+        headers = [existing_columns[header.lower()] for header in headers]
+        if overwrite_existing:
+            exec_sql(
+                "truncate table {}.{}".format(
+                    _quote_identifier(database_name),
+                    _quote_identifier(normalized_table_name),
+                ),
+                include_database=False,
+            )
+
+    if rows:
+        placeholders = ", ".join(["%s"] * len(headers))
+        cnx = None
+        cursor = None
+        try:
+            cnx = mysql_connection(get_connection_config(include_database=False))
+            cursor = cnx.cursor()
+            cursor.executemany(
+                "insert into {}.{} ({}) values ({})".format(
+                    _quote_identifier(database_name),
+                    _quote_identifier(normalized_table_name),
+                    ", ".join(_quote_identifier(header) for header in headers),
+                    placeholders,
+                ),
+                rows,
+            )
+            cnx.commit()
+        except mysql.connector.Error:
+            if cnx:
+                cnx.rollback()
+            raise
+        finally:
+            if cursor:
+                cursor.close()
+            if cnx and cnx.is_connected():
+                cnx.close()
+
+    return {
+        "database_name": database_name,
+        "table_name": normalized_table_name,
+        "created_table": not table_exists,
+        "overwrite_existing": bool(table_exists and overwrite_existing),
+        "row_count": len(rows),
+        "column_count": len(headers),
+        "filename": import_payload.get("filename", ""),
+    }
+
+
 def _format_uptime(seconds):
     try:
         total_seconds = int(float(seconds or 0))
@@ -559,6 +958,70 @@ def _format_uptime(seconds):
         parts.append(f"{minutes}m")
     parts.append(f"{secs}s")
     return " ".join(parts)
+
+
+def _validate_identifier(identifier, label):
+    value = str(identifier or "").strip()
+    if not value:
+        raise ValueError(f"{label} is required.")
+    if not IDENTIFIER_RE.match(value):
+        raise ValueError(f"{label} must use only letters, digits, `_`, or `$`.")
+    return value
+
+
+def _normalize_mysql_data_type(data_type):
+    value = str(data_type or "").strip().upper()
+    value = re.sub(r"\s+", " ", value)
+    if not value:
+        raise ValueError("Column data type is required.")
+    if not MYSQL_DATA_TYPE_RE.match(value):
+        raise ValueError(f"Unsupported MySQL data type: {data_type}.")
+    return value
+
+
+def _build_mysql_data_type(base_type, params_text=""):
+    normalized_base_type = str(base_type or "").strip().upper()
+    option = MYSQL_TYPE_OPTION_MAP.get(normalized_base_type)
+    if not option:
+        raise ValueError(f"Unsupported MySQL data type: {base_type}.")
+
+    cleaned_params = str(params_text or "").strip()
+    if option["param_mode"] == "none":
+        return normalized_base_type
+
+    if not cleaned_params:
+        raise ValueError(f"{normalized_base_type} requires size parameters.")
+
+    if option["param_mode"] == "single":
+        if not re.fullmatch(r"\d+", cleaned_params):
+            raise ValueError(f"{normalized_base_type} size must be a single integer.")
+    elif option["param_mode"] == "multi":
+        if not re.fullmatch(r"\d+\s*,\s*\d+", cleaned_params):
+            raise ValueError(f"{normalized_base_type} size must use two integers, for example 10,3.")
+
+    return _normalize_mysql_data_type(f"{normalized_base_type}({cleaned_params})")
+
+
+def _parse_secondary_engine(create_options):
+    text = str(create_options or "").upper()
+    match = re.search(r'SECONDARY_ENGINE="?([A-Z0-9_]+)"?', text)
+    return match.group(1) if match else ""
+
+
+def _split_mysql_data_type(column_type, data_type):
+    base_type = str(data_type or "").strip().upper()
+    raw_column_type = str(column_type or "").strip()
+    params = ""
+    match = re.search(r"\(([^()]*)\)", raw_column_type)
+    if match:
+        params = match.group(1).strip()
+    if not base_type:
+        normalized_column_type = _normalize_mysql_data_type(raw_column_type)
+        base_match = re.match(r"^([A-Z]+(?:\s+[A-Z]+)?)", normalized_column_type)
+        base_type = base_match.group(1) if base_match else normalized_column_type
+        params_match = re.search(r"\(([^()]*)\)", normalized_column_type)
+        params = params_match.group(1).strip() if params_match else params
+    return base_type, params
 
 
 def _table_exists(schema_name, table_name):
@@ -588,6 +1051,812 @@ def _get_table_columns(schema_name, table_name):
         include_database=False,
     )
     return [row[0] for row in rows]
+
+
+def _database_exists(schema_name):
+    rows = run_sql(
+        """
+        select schema_name as schema_name_value
+        from information_schema.schemata
+        where schema_name = %s
+        """,
+        (schema_name,),
+        include_database=False,
+    )
+    return bool(rows)
+
+
+def _is_system_database(schema_name):
+    name = str(schema_name or "")
+    return name in SYSTEM_DATABASES or name.startswith("mysql_")
+
+
+def _default_table_form():
+    return {
+        "table_name": "",
+        "columns": [
+            {
+                "name": "",
+                "type_name": "VARCHAR",
+                "type_params": "255",
+                "nullable": True,
+                "primary": False,
+            }
+        ],
+    }
+
+
+def _default_column_form():
+    return {
+        "original_name": "",
+        "name": "",
+        "type_name": "VARCHAR",
+        "type_params": "255",
+        "nullable": True,
+    }
+
+
+def _default_import_form():
+    return {
+        "database_name": "",
+        "table_name": "",
+        "overwrite_existing": False,
+        "create_new_table": False,
+        "add_invisible_primary_key": False,
+        "preview_token": "",
+    }
+
+
+def _normalize_db_admin_tab(value):
+    tab = str(value or "db").strip().lower()
+    return tab if tab in {item["id"] for item in DB_ADMIN_TABS} else "db"
+
+
+def fetch_database_inventory():
+    rows = run_sql(
+        """
+        select
+            s.schema_name as database_name_value,
+            coalesce(stats.table_count, 0) as table_count_value
+        from information_schema.schemata s
+        left join (
+            select
+                table_schema as table_schema_value,
+                count(*) as table_count
+            from information_schema.tables
+            where table_type = 'BASE TABLE'
+            group by table_schema
+        ) stats
+            on stats.table_schema_value = s.schema_name
+        order by s.schema_name
+        """,
+        include_database=False,
+    )
+    inventory = [
+        {
+            "database_name": row[0],
+            "table_count": int(row[1] or 0),
+            "is_system": _is_system_database(row[0]),
+        }
+        for row in rows
+    ]
+    return sorted(
+        inventory,
+        key=lambda row: (0 if row["is_system"] else 1, row["database_name"].lower()),
+    )
+
+
+def fetch_import_tree():
+    rows = run_sql(
+        """
+        select
+            s.schema_name as database_name_value,
+            t.table_name as table_name_value
+        from information_schema.schemata s
+        left join information_schema.tables t
+            on t.table_schema = s.schema_name
+           and t.table_type = 'BASE TABLE'
+        order by s.schema_name, t.table_name
+        """,
+        include_database=False,
+    )
+    databases = {}
+    for database_name, table_name in rows:
+        entry = databases.setdefault(
+            database_name,
+            {
+                "database_name": database_name,
+                "is_system": _is_system_database(database_name),
+                "tables": [],
+            },
+        )
+        if table_name:
+            entry["tables"].append(table_name)
+    result = list(databases.values())
+    result.sort(key=lambda row: (0 if row["is_system"] else 1, row["database_name"].lower()))
+    return result
+
+
+def fetch_tables_for_database(schema_name):
+    rows = run_sql(
+        """
+        select
+            t.table_name as table_name_value,
+            coalesce(t.table_rows, 0) as row_count_value,
+            coalesce(c.column_count, 0) as column_count_value,
+            coalesce(t.engine, '') as engine_value,
+            coalesce(t.create_options, '') as create_options_value
+        from information_schema.tables t
+        left join (
+            select
+                table_schema as table_schema_value,
+                table_name as table_name_value,
+                count(*) as column_count
+            from information_schema.columns
+            where table_schema = %s
+            group by table_schema, table_name
+        ) c
+            on c.table_schema_value = t.table_schema
+           and c.table_name_value = t.table_name
+        where t.table_schema = %s
+          and t.table_type = 'BASE TABLE'
+        order by t.table_name
+        """,
+        (schema_name, schema_name),
+        include_database=False,
+    )
+    heatwave_status = fetch_heatwave_load_status_for_database(schema_name)
+    return [
+        {
+            "table_name": row[0],
+            "row_count": int(row[1] or 0),
+            "column_count": int(row[2] or 0),
+            "engine": row[3] or "-",
+            "secondary_engine": _parse_secondary_engine(row[4]),
+            "engine_display": "{} / {}".format(
+                row[3] or "-",
+                _parse_secondary_engine(row[4]) or "-",
+            ),
+            "heatwave": heatwave_status.get(
+                str(row[0]).lower(),
+                {
+                    "progress_value": None,
+                    "progress_display": "-",
+                    "is_loaded": False,
+                },
+            ),
+        }
+        for row in rows
+    ]
+
+
+def _extract_table_name_from_heatwave_row(schema_name, row):
+    schema_value = str(row.get("schema_name", "") or "").strip()
+    table_value = str(row.get("table_name", "") or "").strip()
+    if schema_value and table_value and schema_value.lower() == schema_name.lower():
+        return table_value
+
+    composite_name = str(row.get("full_name", "") or "").strip()
+    if composite_name:
+        normalized = composite_name.strip("`")
+        if "." in normalized:
+            left, right = normalized.split(".", 1)
+            if left.strip("`").lower() == schema_name.lower():
+                return right.strip("`")
+        elif normalized:
+            return normalized
+
+    if table_value:
+        return table_value
+    return ""
+
+
+def fetch_heatwave_load_status_for_database(schema_name):
+    if not (_table_exists("performance_schema", "rpd_tables") and _table_exists("performance_schema", "rpd_table_id")):
+        return {}
+
+    table_columns = _get_table_columns("performance_schema", "rpd_tables")
+    table_id_columns = _get_table_columns("performance_schema", "rpd_table_id")
+
+    rpd_table_id_column = _pick_present_column(table_columns, ["rpd_table_id", "table_id", "id"])
+    progress_column = _pick_present_column(
+        table_columns,
+        ["load_progress", "loading_progress", "load_percentage", "pct_loaded", "progress"],
+    )
+    id_column = _pick_present_column(table_id_columns, ["id"])
+    name_column = _pick_present_column(table_id_columns, ["name"])
+    schema_column = _pick_present_column(table_id_columns, ["schema_name", "table_schema", "database_name", "db_name"])
+    table_name_column = _pick_present_column(table_id_columns, ["table_name", "name"])
+
+    if not (rpd_table_id_column and id_column and progress_column):
+        return {}
+
+    select_parts = [
+        "t.{} as load_progress".format(_quote_identifier(progress_column)),
+    ]
+    if schema_column:
+        select_parts.append("i.{} as schema_name".format(_quote_identifier(schema_column)))
+    if table_name_column:
+        select_parts.append("i.{} as table_name".format(_quote_identifier(table_name_column)))
+    if name_column and name_column != table_name_column:
+        select_parts.append("i.{} as full_name".format(_quote_identifier(name_column)))
+    elif name_column:
+        select_parts.append("i.{} as full_name".format(_quote_identifier(name_column)))
+
+    query = """
+    select {columns}
+    from performance_schema.rpd_tables t
+    inner join performance_schema.rpd_table_id i
+        on i.{id_column} = t.{table_id_column}
+    """.format(
+        columns=", ".join(select_parts),
+        id_column=_quote_identifier(id_column),
+        table_id_column=_quote_identifier(rpd_table_id_column),
+    )
+    rows = run_sql_dicts(query, include_database=False)
+
+    status_map = {}
+    for row in rows:
+        table_name = _extract_table_name_from_heatwave_row(schema_name, row)
+        if not table_name:
+            continue
+        progress_value = _normalize_progress(row.get("load_progress"))
+        if progress_value is None:
+            continue
+        existing = status_map.get(table_name.lower())
+        if existing is None or progress_value > existing["progress_value"]:
+            status_map[table_name.lower()] = {
+                "progress_value": progress_value,
+                "progress_display": _format_progress(progress_value),
+                "is_loaded": progress_value >= 100,
+            }
+    return status_map
+
+
+def fetch_heatwave_tables_report():
+    report = {
+        "columns": [
+            "Schema",
+            "Table",
+            "HeatWave Status",
+            "Load Progress",
+            "Status Detail",
+            "Error Detail",
+            "Size Bytes",
+            "Query Count",
+            "Recovery Source",
+            "Load Start",
+            "Duration (sec)",
+        ],
+        "rows": [],
+        "row_classes": [],
+        "row_actions": [],
+    }
+    if not (_table_exists("performance_schema", "rpd_tables") and _table_exists("performance_schema", "rpd_table_id")):
+        return report
+
+    table_columns = _get_table_columns("performance_schema", "rpd_tables")
+    table_id_columns = _get_table_columns("performance_schema", "rpd_table_id")
+
+    table_id_column = _pick_present_column(table_columns, ["rpd_table_id", "table_id", "id"])
+    id_column = _pick_present_column(table_id_columns, ["id"])
+    name_column = _pick_present_column(table_id_columns, ["table_name", "name"])
+    schema_column = _pick_present_column(table_id_columns, ["schema_name", "table_schema", "database_name", "db_name"])
+    full_name_column = _pick_present_column(table_id_columns, ["name"])
+    progress_column = _pick_present_column(
+        table_columns,
+        ["load_progress", "loading_progress", "load_percentage", "pct_loaded", "progress"],
+    )
+    status_column = _pick_present_column(table_columns, ["status", "load_status", "state"])
+    error_column = _pick_present_column(table_columns, ["error_message", "error", "last_error", "load_error", "message"])
+    size_column = _pick_present_column(table_columns, ["size_bytes", "size", "table_size"])
+    query_count_column = _pick_present_column(table_columns, ["query_count"])
+    recovery_source_column = _pick_present_column(table_columns, ["recovery_source"])
+    load_start_column = _pick_present_column(table_columns, ["load_start_timestamp", "load_start_time", "load_start"])
+    load_end_column = _pick_present_column(table_columns, ["load_end_timestamp", "load_end_time", "load_end"])
+
+    if not (table_id_column and id_column):
+        return report
+
+    select_parts = []
+    if schema_column:
+        select_parts.append("i.{} as schema_name".format(_quote_identifier(schema_column)))
+    if name_column:
+        select_parts.append("i.{} as table_name".format(_quote_identifier(name_column)))
+    if full_name_column:
+        select_parts.append("i.{} as full_name".format(_quote_identifier(full_name_column)))
+    if progress_column:
+        select_parts.append("t.{} as load_progress".format(_quote_identifier(progress_column)))
+    if status_column:
+        select_parts.append("t.{} as status_text".format(_quote_identifier(status_column)))
+    if error_column:
+        select_parts.append("t.{} as error_text".format(_quote_identifier(error_column)))
+    if size_column:
+        select_parts.append("t.{} as size_bytes".format(_quote_identifier(size_column)))
+    if query_count_column:
+        select_parts.append("t.{} as query_count".format(_quote_identifier(query_count_column)))
+    if recovery_source_column:
+        select_parts.append("t.{} as recovery_source".format(_quote_identifier(recovery_source_column)))
+    if load_start_column:
+        select_parts.append("t.{} as load_start_timestamp".format(_quote_identifier(load_start_column)))
+    if load_start_column and load_end_column:
+        select_parts.append(
+            "time_to_sec(timediff(t.{load_end}, t.{load_start})) as duration_in_sec".format(
+                load_end=_quote_identifier(load_end_column),
+                load_start=_quote_identifier(load_start_column),
+            )
+        )
+
+    if not select_parts:
+        return report
+
+    rows = run_sql_dicts(
+        """
+        select {columns}
+        from performance_schema.rpd_tables t
+        inner join performance_schema.rpd_table_id i
+            on i.{id_column} = t.{table_id_column}
+        """.format(
+            columns=", ".join(select_parts),
+            id_column=_quote_identifier(id_column),
+            table_id_column=_quote_identifier(table_id_column),
+        ),
+        include_database=False,
+    )
+
+    sorted_rows = sorted(
+        rows,
+        key=lambda row: (
+            str(row.get("schema_name", "") or "").lower(),
+            str(row.get("table_name", "") or row.get("full_name", "") or "").lower(),
+        ),
+    )
+    for row in sorted_rows:
+        schema_name = str(row.get("schema_name", "") or "").strip()
+        table_name = str(row.get("table_name", "") or "").strip()
+        if not schema_name or not table_name:
+            derived_schema, derived_table = _split_heatwave_object_name(row.get("full_name", ""))
+            schema_name = schema_name or derived_schema
+            table_name = table_name or derived_table
+
+        progress_value = _normalize_progress(row.get("load_progress"))
+        status_text = str(row.get("status_text", "") or "").strip()
+        error_text = str(row.get("error_text", "") or "").strip()
+        row_class = _derive_heatwave_row_class(progress_value, status_text, error_text)
+        report["rows"].append(
+            [
+                schema_name or "-",
+                table_name or "-",
+                "Loaded" if row_class == "loaded" else ("Error" if row_class == "error" else "Partial"),
+                _format_progress(progress_value) if progress_value is not None else "-",
+                status_text or "-",
+                error_text or "-",
+                row.get("size_bytes", "-") if row.get("size_bytes") not in (None, "") else "-",
+                row.get("query_count", "-") if row.get("query_count") not in (None, "") else "-",
+                str(row.get("recovery_source", "") or "-"),
+                str(row.get("load_start_timestamp", "") or "-"),
+                row.get("duration_in_sec", "-") if row.get("duration_in_sec") not in (None, "") else "-",
+            ]
+        )
+        report["row_classes"].append(row_class)
+        report["row_actions"].append(
+            {
+                "schema_name": schema_name,
+                "table_name": table_name,
+                "can_unload": bool(schema_name and table_name and not _is_system_database(schema_name)),
+            }
+        )
+    return report
+
+
+def fetch_heatwave_performance_queries():
+    return run_sql_with_columns(
+        """
+        SELECT
+            QUERY_ID,
+            QUERY_TEXT,
+            STR_TO_DATE(
+                JSON_UNQUOTE(
+                    JSON_EXTRACT(QEXEC_TEXT->>"$**.queryStartTime", '$[0]')
+                ),
+                '%Y-%m-%d %H:%i:%s.%f'
+            ) AS QUERY_START,
+            STR_TO_DATE(
+                JSON_UNQUOTE(
+                    JSON_EXTRACT(QEXEC_TEXT->>"$**.qexecStartTime", '$[0]')
+                ),
+                '%Y-%m-%d %H:%i:%s.%f'
+            ) AS RPD_START,
+            JSON_EXTRACT(QEXEC_TEXT->>"$**.timeBetweenMakePushedJoinAndRpdExecMsec", '$[0]')
+            AS QUEUE_WAIT,
+            STR_TO_DATE(
+                JSON_UNQUOTE(
+                    JSON_EXTRACT(QEXEC_TEXT->>"$**.queryEndTime", '$[0]')
+                ),
+                '%Y-%m-%d %H:%i:%s.%f'
+            ) AS QUERY_END,
+            JSON_EXTRACT(QEXEC_TEXT->>"$**.changePropagationSync.msec", '$[0]') AS ChangePropagation,
+            JSON_EXTRACT(QEXEC_TEXT->>"$**.totalQueryTimeBreakdown.waitTime", '$[0]') AS Ttl_wait_time,
+            JSON_EXTRACT(QEXEC_TEXT->>"$**.totalQueryTimeBreakdown.executionTime", '$[0]') AS Ttl_exec_time,
+            JSON_EXTRACT(QEXEC_TEXT->>"$**.totalQueryTimeBreakdown.optimizationTime", '$[0]') AS Ttl_opt_time,
+            JSON_EXTRACT(QEXEC_TEXT->>"$**.rpdExec.msec", '$[0]') AS RPD_EXEC,
+            JSON_EXTRACT(QEXEC_TEXT->>"$**.getResults.msec", '$[0]') AS GET_RESULT,
+            JSON_EXTRACT(QEXEC_TEXT->>"$**.sessionId", '$[0]') AS CONNECTION_ID,
+            JSON_EXTRACT(QEXEC_TEXT->>"$**.qkrnActualRows[*].actRows", "$[0]") AS actRows
+        FROM performance_schema.rpd_query_stats
+        WHERE query_text not like 'ML_%'
+        """,
+        include_database=False,
+    )
+
+
+def fetch_heatwave_ml_queries():
+    return run_sql_with_columns(
+        """
+        select
+            QEXEC_TEXT->>"$.startTime" as startTime,
+            query_text,
+            QEXEC_TEXT->>"$.status" as status,
+            QEXEC_TEXT->>"$.totalRunTime" as totalRunTime,
+            QEXEC_TEXT->>"$.details.operation" as operation,
+            QEXEC_TEXT->>"$.completionPercentage" as completionPercentage,
+            JSON_LENGTH(QEXEC_TEXT->>"$.progressItems") as progressItemsCount,
+            JSON_LENGTH(QEXEC_TEXT->>"$.completedSteps") as completedSteps,
+            JSON_EXTRACT(QEXEC_TEXT, concat("$.progressItems[", JSON_LENGTH(QEXEC_TEXT->>"$.completedSteps"), "]")) as progressItem,
+            JSON_EXTRACT(
+                JSON_EXTRACT(QEXEC_TEXT, concat("$.progressItems[", JSON_LENGTH(QEXEC_TEXT->>"$.completedSteps"), "]")),
+                "$.type"
+            ) as progressType,
+            query_id,
+            connection_id
+        from performance_schema.rpd_query_stats
+        where query_text like 'ML_%'
+        order by startTime desc
+        """,
+        include_database=False,
+    )
+
+
+def fetch_heatwave_table_load_recovery():
+    return run_sql_with_columns(
+        """
+        select
+            rpd_table_id.id,
+            name,
+            size_bytes,
+            query_count,
+            recovery_source,
+            load_start_timestamp,
+            time_to_sec(timediff(load_end_timestamp, load_start_timestamp)) as duration_in_sec
+        from performance_schema.rpd_tables, performance_schema.rpd_table_id
+        where rpd_tables.id = rpd_table_id.id
+        order by size_bytes
+        """,
+        include_database=False,
+    )
+
+
+def fetch_table_definition(schema_name, table_name):
+    rows = run_sql(
+        """
+        select
+            column_name as column_name_value,
+            column_type as column_type_value,
+            data_type as data_type_value,
+            is_nullable as is_nullable_value,
+            column_key as column_key_value,
+            column_default as column_default_value,
+            extra as extra_value,
+            ordinal_position as ordinal_position_value
+        from information_schema.columns
+        where table_schema = %s
+          and table_name = %s
+        order by ordinal_position
+        """,
+        (schema_name, table_name),
+        include_database=False,
+    )
+    definition = []
+    for row in rows:
+        type_name, type_params = _split_mysql_data_type(row[1], row[2])
+        definition.append(
+            {
+                "column_name": row[0],
+                "column_type": row[1],
+                "data_type": row[2],
+                "type_name": type_name,
+                "type_params": type_params,
+                "is_nullable": row[3],
+                "column_key": row[4],
+                "column_default": row[5],
+                "extra": row[6],
+                "ordinal_position": row[7],
+            }
+        )
+    return definition
+
+
+def fetch_table_browse_page(schema_name, table_name, page_number=1, page_size=50):
+    database_name = _validate_identifier(schema_name, "Database name")
+    normalized_table_name = _validate_identifier(table_name, "Table name")
+    if not _table_exists(database_name, normalized_table_name):
+        raise ValueError(f"Table `{database_name}.{normalized_table_name}` was not found.")
+
+    try:
+        normalized_page = max(1, int(page_number or 1))
+    except (TypeError, ValueError):
+        normalized_page = 1
+    offset = (normalized_page - 1) * page_size
+
+    total_rows = run_sql(
+        "select count(*) as row_count from {}.{}".format(
+            _quote_identifier(database_name),
+            _quote_identifier(normalized_table_name),
+        ),
+        include_database=False,
+    )[0][0]
+    page_count = max(1, (int(total_rows or 0) + page_size - 1) // page_size)
+    normalized_page = min(normalized_page, page_count)
+    offset = (normalized_page - 1) * page_size
+
+    result = run_sql_with_columns(
+        "select * from {}.{} limit %s offset %s".format(
+            _quote_identifier(database_name),
+            _quote_identifier(normalized_table_name),
+        ),
+        params=(page_size, offset),
+        include_database=False,
+    )
+    return {
+        "table_name": normalized_table_name,
+        "columns": result["columns"],
+        "rows": result["rows"],
+        "page_number": normalized_page,
+        "page_size": page_size,
+        "page_count": page_count,
+        "total_rows": int(total_rows or 0),
+        "has_previous": normalized_page > 1,
+        "has_next": normalized_page < page_count,
+    }
+
+
+def create_database(schema_name):
+    database_name = _validate_identifier(schema_name, "Database name")
+    exec_sql(
+        f"create database {_quote_identifier(database_name)}",
+        include_database=False,
+    )
+    return database_name
+
+
+def drop_database(schema_name):
+    database_name = _validate_identifier(schema_name, "Database name")
+    if _is_system_database(database_name):
+        raise ValueError("System databases cannot be deleted.")
+    exec_sql(
+        f"drop database {_quote_identifier(database_name)}",
+        include_database=False,
+    )
+    return database_name
+
+
+def drop_table(schema_name, table_name):
+    database_name = _validate_identifier(schema_name, "Database name")
+    normalized_table_name = _validate_identifier(table_name, "Table name")
+    if _is_system_database(database_name):
+        raise ValueError("System databases cannot be modified.")
+    exec_sql(
+        "drop table {}.{}".format(
+            _quote_identifier(database_name),
+            _quote_identifier(normalized_table_name),
+        ),
+        include_database=False,
+    )
+    return normalized_table_name
+
+
+def collect_table_column_definitions(form):
+    column_names = form.getlist("column_name")
+    column_type_names = form.getlist("column_type_name")
+    column_type_params = form.getlist("column_type_params")
+    column_nullable = form.getlist("column_nullable")
+    primary_indexes = set(form.getlist("column_primary"))
+    columns = []
+    max_length = max(len(column_names), len(column_type_names), len(column_type_params), len(column_nullable), 1)
+    seen_names = set()
+
+    for index, raw_name, raw_type_name, raw_type_params, raw_nullable in zip_longest(
+        range(max_length),
+        column_names,
+        column_type_names,
+        column_type_params,
+        column_nullable,
+        fillvalue="",
+    ):
+        name = str(raw_name or "").strip()
+        type_name = str(raw_type_name or "").strip()
+        type_params = str(raw_type_params or "").strip()
+        nullable_choice = str(raw_nullable or "yes").strip().lower()
+        is_primary = str(index) in primary_indexes
+
+        if not name and not type_name and not type_params:
+            continue
+        if not name or not type_name:
+            raise ValueError("Each table column needs both a name and a MySQL data type.")
+
+        normalized_name = _validate_identifier(name, "Column name")
+        normalized_data_type = _build_mysql_data_type(type_name, type_params)
+        lowered_name = normalized_name.lower()
+        if lowered_name in seen_names:
+            raise ValueError(f"Duplicate column name: {normalized_name}.")
+        seen_names.add(lowered_name)
+
+        columns.append(
+            {
+                "name": normalized_name,
+                "data_type": normalized_data_type,
+                "type_name": str(type_name).upper(),
+                "type_params": type_params,
+                "nullable": nullable_choice != "no" and not is_primary,
+                "primary": is_primary,
+            }
+        )
+
+    if not columns:
+        raise ValueError("Add at least one column before creating the table.")
+    return columns
+
+
+def create_table(schema_name, table_name, columns, *, add_invisible_auto_pk=False):
+    database_name = _validate_identifier(schema_name, "Database name")
+    normalized_table_name = _validate_identifier(table_name, "Table name")
+    if _is_system_database(database_name):
+        raise ValueError("System databases cannot be modified.")
+    if not columns:
+        raise ValueError("Add at least one column before creating the table.")
+
+    column_sql = []
+    primary_key_columns = []
+    for column in columns:
+        definition = "{} {}".format(
+            _quote_identifier(_validate_identifier(column["name"], "Column name")),
+            _normalize_mysql_data_type(column["data_type"]),
+        )
+        if column.get("primary") or not column.get("nullable", True):
+            definition += " NOT NULL"
+        column_sql.append(definition)
+        if column.get("primary"):
+            primary_key_columns.append(_quote_identifier(column["name"]))
+
+    ddl_parts = list(column_sql)
+    if primary_key_columns:
+        ddl_parts.append("PRIMARY KEY ({})".format(", ".join(primary_key_columns)))
+    elif add_invisible_auto_pk:
+        if any(str(column.get("name", "")).strip().lower() == "my_row_id" for column in columns):
+            raise ValueError("Column name `my_row_id` is reserved for the generated invisible primary key.")
+        ddl_parts.insert(
+            0,
+            "{} BIGINT UNSIGNED NOT NULL AUTO_INCREMENT INVISIBLE".format(_quote_identifier("my_row_id")),
+        )
+        ddl_parts.append("PRIMARY KEY ({})".format(_quote_identifier("my_row_id")))
+
+    exec_sql(
+        "create table {}.{} (\n  {}\n)".format(
+            _quote_identifier(database_name),
+            _quote_identifier(normalized_table_name),
+            ",\n  ".join(ddl_parts),
+        ),
+        include_database=False,
+    )
+    return normalized_table_name
+
+
+def add_table_column(schema_name, table_name, column):
+    database_name = _validate_identifier(schema_name, "Database name")
+    normalized_table_name = _validate_identifier(table_name, "Table name")
+    if _is_system_database(database_name):
+        raise ValueError("System databases cannot be modified.")
+
+    column_name = _validate_identifier(column["name"], "Column name")
+    column_type = _build_mysql_data_type(column["type_name"], column.get("type_params", ""))
+    definition = "{} {}".format(_quote_identifier(column_name), column_type)
+    if not column.get("nullable", True):
+        definition += " NOT NULL"
+    exec_sql(
+        "alter table {}.{} add column {}".format(
+            _quote_identifier(database_name),
+            _quote_identifier(normalized_table_name),
+            definition,
+        ),
+        include_database=False,
+    )
+    return column_name
+
+
+def modify_table_column(schema_name, table_name, original_column_name, column):
+    database_name = _validate_identifier(schema_name, "Database name")
+    normalized_table_name = _validate_identifier(table_name, "Table name")
+    old_column_name = _validate_identifier(original_column_name, "Original column name")
+    if _is_system_database(database_name):
+        raise ValueError("System databases cannot be modified.")
+
+    new_column_name = _validate_identifier(column["name"], "Column name")
+    column_type = _build_mysql_data_type(column["type_name"], column.get("type_params", ""))
+    definition = "{} {}".format(_quote_identifier(new_column_name), column_type)
+    if not column.get("nullable", True):
+        definition += " NOT NULL"
+    exec_sql(
+        "alter table {}.{} change column {} {}".format(
+            _quote_identifier(database_name),
+            _quote_identifier(normalized_table_name),
+            _quote_identifier(old_column_name),
+            definition,
+        ),
+        include_database=False,
+    )
+    return new_column_name
+
+
+def load_table_to_heatwave(schema_name, table_name, secondary_engine="RAPID"):
+    database_name = _validate_identifier(schema_name, "Database name")
+    normalized_table_name = _validate_identifier(table_name, "Table name")
+    if _is_system_database(database_name):
+        raise ValueError("System databases cannot be modified.")
+
+    if str(secondary_engine or "").strip().upper() != "RAPID":
+        exec_sql(
+            "alter table {}.{} secondary_engine=rapid".format(
+                _quote_identifier(database_name),
+                _quote_identifier(normalized_table_name),
+            ),
+            include_database=False,
+        )
+    exec_sql(
+        "alter table {}.{} secondary_load".format(
+            _quote_identifier(database_name),
+            _quote_identifier(normalized_table_name),
+        ),
+        include_database=False,
+    )
+    return normalized_table_name
+
+
+def unload_table_from_heatwave(schema_name, table_name):
+    database_name = _validate_identifier(schema_name, "Database name")
+    normalized_table_name = _validate_identifier(table_name, "Table name")
+    if _is_system_database(database_name):
+        raise ValueError("System databases cannot be modified.")
+
+    exec_sql(
+        "alter table {}.{} secondary_unload".format(
+            _quote_identifier(database_name),
+            _quote_identifier(normalized_table_name),
+        ),
+        include_database=False,
+    )
+    return normalized_table_name
+
+
+def load_database_to_heatwave(schema_name):
+    database_name = _validate_identifier(schema_name, "Database name")
+    if _is_system_database(database_name):
+        raise ValueError("System databases cannot be modified.")
+    datasets = run_sql_multi_resultsets(
+        'call sys.heatwave_load(json_array("{}"), null)'.format(database_name),
+        include_database=False,
+    )
+    return {"database_name": database_name, "datasets": datasets}
+
+
+def unload_database_from_heatwave(schema_name):
+    database_name = _validate_identifier(schema_name, "Database name")
+    if _is_system_database(database_name):
+        raise ValueError("System databases cannot be modified.")
+    datasets = run_sql_multi_resultsets(
+        'call sys.heatwave_unload(json_array("{}"), null)'.format(database_name),
+        include_database=False,
+    )
+    return {"database_name": database_name, "datasets": datasets}
 
 
 def _build_table_model(rows, columns, *, labels=None, formatters=None):
@@ -1079,6 +2348,72 @@ def build_nlsql_tables(result):
     return tables
 
 
+def _queue_db_admin_modal_result(title, datasets):
+    session["db_admin_modal_result"] = {
+        "title": str(title or "Procedure Result"),
+        "datasets": list(datasets or []),
+        "message": "" if datasets else "Procedure completed without a tabular result set.",
+    }
+
+
+def _pop_db_admin_modal_result():
+    return session.pop("db_admin_modal_result", None)
+
+
+def _build_csv_response(filename, columns, rows):
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(columns)
+    for row in rows:
+        writer.writerow([_normalize_modal_cell(value) for value in row])
+    return Response(
+        buffer.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="{}"'.format(filename)},
+    )
+
+
+def _build_db_admin_download_payload(active_tab, selected_database):
+    if active_tab == "db":
+        inventory = fetch_database_inventory()
+        return (
+            "db-admin-databases.csv",
+            ["Database", "Tables", "Protected"],
+            [[row["database_name"], row["table_count"], "Yes" if row["is_system"] else "No"] for row in inventory],
+        )
+    if active_tab == "table":
+        if not selected_database:
+            raise ValueError("Choose a database before downloading the table list.")
+        tables = fetch_tables_for_database(selected_database)
+        return (
+            "db-admin-tables-{}.csv".format(selected_database),
+            ["Table", "Rows", "Columns", "Engines", "HeatWave"],
+            [
+                [
+                    row["table_name"],
+                    row["row_count"],
+                    row["column_count"],
+                    row["engine_display"],
+                    row["heatwave"]["progress_display"] if row["heatwave"]["progress_value"] is not None else "-",
+                ]
+                for row in tables
+            ],
+        )
+    if active_tab == "hw-tables":
+        report = fetch_heatwave_tables_report()
+        return ("db-admin-hw-tables.csv", report["columns"], report["rows"])
+    if active_tab == "heatwave-performance-query":
+        report = fetch_heatwave_performance_queries()
+        return ("db-admin-heatwave-performance-query.csv", report["columns"], report["rows"])
+    if active_tab == "heatwave-ml-query":
+        report = fetch_heatwave_ml_queries()
+        return ("db-admin-heatwave-ml-query.csv", report["columns"], report["rows"])
+    if active_tab == "hw-table-load-recovery":
+        report = fetch_heatwave_table_load_recovery()
+        return ("db-admin-hw-table-load-recovery.csv", report["columns"], report["rows"])
+    raise ValueError("Unsupported DB Admin tab for download.")
+
+
 def answer_query_on_image(question, model_id, image_base64):
     rows = run_sql(
         """
@@ -1112,289 +2447,6 @@ def redirect_for_profile_update(profile_name=""):
     if return_to == "connection_profile" and session.get("logged_in"):
         return redirect(url_for("connection_profile", profile=profile_name))
     return redirect(url_for("login", profile=profile_name))
-
-
-@app.route("/", methods=["GET"])
-def home():
-    if not session.get("logged_in"):
-        return redirect(url_for("login"))
-    active_tab = request.args.get("tab", "demo").strip().lower()
-    if active_tab not in {tab["id"] for tab in DASHBOARD_TABS}:
-        active_tab = "demo"
-    server_info = None
-    if active_tab == "server-info":
-        try:
-            server_info = get_dashboard_server_info()
-        except mysql.connector.Error as error:
-            flash(str(error), "error")
-            server_info = {
-                "connection_endpoint": get_connection_summary(),
-                "default_database": get_session_profile()["database"] or "-",
-                "user": session.get("db_user", "") or "-",
-                "server_version": "-",
-                "uptime": "-",
-                "database_rows": [],
-                "summary": {
-                    "database_count_display": "0",
-                    "table_count_display": "0",
-                    "data_length_display": "0 B",
-                    "index_length_display": "0 B",
-                    "total_length_display": "0 B",
-                },
-                "heatwave": {
-                    "available": False,
-                    "status": "Unable to query server metadata",
-                    "node_count": 0,
-                    "fully_loaded_count": None,
-                    "partially_loaded_count": None,
-                    "nodes_table": {"columns": [], "rows": []},
-                    "loaded_tables": {"columns": [], "rows": []},
-                    "partial_tables": {"columns": [], "rows": []},
-                    "notes": [],
-                },
-                "errors": [str(error)],
-            }
-    return render_dashboard(
-        "dashboard.html",
-        page_title="Dashboard",
-        active_tab=active_tab,
-        tabs=DASHBOARD_TABS,
-        server_info=server_info,
-    )
-
-
-@app.route("/login", methods=["GET", "POST"])
-def login():
-    if session.get("logged_in"):
-        return redirect(url_for("home"))
-
-    profiles = load_profiles()
-    selected_profile_name = get_selected_profile_name()
-    selected_profile = get_profile_by_name(selected_profile_name) or normalize_profile(DEFAULT_PROFILE)
-    if request.method == "POST":
-        selected_profile_name = request.form.get("profile_name", "").strip()
-        selected_profile = get_profile_by_name(selected_profile_name)
-        username = request.form.get("username", "").strip()
-        password = request.form.get("password", "")
-
-        if not selected_profile:
-            flash("Choose a saved connection profile before logging in.", "warning")
-        else:
-            set_session_profile(selected_profile)
-            ok, message = validate_user(username, password)
-            if ok:
-                session["db_user"] = username
-                session["db_password"] = password
-                session["logged_in"] = True
-                flash("Login successful.", "success")
-                return redirect(url_for("home"))
-            clear_login_state()
-            flash(message or "Invalid connection profile or database credentials.", "error")
-        selected_profile = selected_profile or normalize_profile(DEFAULT_PROFILE)
-
-    return render_template(
-        "login.html",
-        app_title=APP_TITLE,
-        profiles=profiles,
-        selected_profile_name=selected_profile_name,
-        selected_profile=selected_profile,
-        form_profile=selected_profile,
-        logged_in=False,
-    )
-
-
-@app.route("/profiles", methods=["POST"])
-def save_profile_route():
-    existing_profiles = load_profiles()
-    action = request.form.get("profile_action", "save")
-    profile = normalize_profile(request.form)
-
-    if not profile["name"]:
-        flash("Profile name is required.", "warning")
-        return redirect_for_profile_update()
-
-    if action == "delete":
-        updated = [row for row in existing_profiles if row["name"].lower() != profile["name"].lower()]
-        save_profiles(updated)
-        if session.get("profile_name", "").lower() == profile["name"].lower():
-            clear_login_state(keep_profile=False)
-        flash("Profile deleted.", "success")
-        return redirect_for_profile_update()
-
-    updated = [row for row in existing_profiles if row["name"].lower() != profile["name"].lower()]
-    updated.append(profile)
-    save_profiles(updated)
-
-    if session.get("profile_name", "").lower() == profile["name"].lower():
-        set_session_profile(profile)
-    flash("Profile saved.", "success")
-    return redirect_for_profile_update(profile["name"])
-
-
-@app.route("/logout", methods=["POST"])
-def logout():
-    clear_login_state()
-    flash("Logged out.", "info")
-    return redirect(url_for("login"))
-
-
-@app.route("/connection-profile", methods=["GET"])
-@login_required
-def connection_profile():
-    profiles = load_profiles()
-    current_name = get_selected_profile_name() or session.get("profile_name", "")
-    current_profile = get_profile_by_name(current_name) or get_session_profile()
-    return render_dashboard(
-        "connection_profile.html",
-        page_title="Connection Profile",
-        profiles=profiles,
-        selected_profile_name=current_name,
-        form_profile=current_profile,
-    )
-
-
-@app.route("/setup-configdb", methods=["GET", "POST"])
-@login_required
-def setup_configdb_page():
-    try:
-        setup_db()
-        if request.method == "POST":
-            selected = request.form.getlist("enabled_databases")
-            save_configdb_databases(selected)
-            flash("Updated nlsql.configdb.", "success")
-            return redirect(url_for("setup_configdb_page"))
-        configured = fetch_enabled_databases()
-        available = fetch_available_databases()
-    except mysql.connector.Error as error:
-        flash(str(error), "error")
-        configured = []
-        available = []
-
-    return render_dashboard(
-        "setup_configdb.html",
-        page_title="Setup configdb",
-        configured_databases=configured,
-        available_databases=available,
-        unconfigured_databases=[name for name in available if name not in configured],
-    )
-
-
-@app.route("/nlsql", methods=["GET", "POST"])
-@login_required
-def nlsql_page():
-    question = ""
-    selected_databases = []
-    sql_text = ""
-    table_names = ""
-    result_tables = []
-    models = []
-    selected_model = ""
-    proc_call_text = ""
-
-    try:
-        setup_db()
-        available_databases = fetch_enabled_databases()
-        models = get_nlsql_models()
-        selected_model = choose_default_model(models)
-        default_databases = [
-            name
-            for name in ("information_schema", "performance_schema")
-            if name in available_databases
-        ]
-
-        if request.method == "POST":
-            question = request.form.get("question", "").strip()
-            selected_databases = request.form.getlist("databases")
-            selected_model = request.form.get("llm", "").strip() or selected_model
-
-            if not question:
-                flash("Enter a question.", "warning")
-            elif not selected_databases:
-                flash("Choose at least one schema.", "warning")
-            elif not selected_model:
-                flash("No supported generation models were found for this connection.", "error")
-            else:
-                proc_call_text = build_nlsql_call_text(question, selected_model, selected_databases)
-                response = call_nlsql(question, selected_model, selected_databases)
-                output = json.loads(response.get("output") or "{}")
-                sql_text = output.get("sql_query", "")
-                table_names = output.get("tables", "")
-                if output.get("is_sql_valid") == 1:
-                    result_tables = build_nlsql_tables(response)
-        else:
-            selected_databases = default_databases
-    except mysql.connector.Error as error:
-        flash(str(error), "error")
-        available_databases = []
-    except json.JSONDecodeError:
-        flash("The NL_SQL response could not be parsed.", "error")
-        available_databases = fetch_enabled_databases() if session.get("logged_in") else []
-
-    return render_dashboard(
-        "nlsql.html",
-        page_title="HWnlsql",
-        available_databases=available_databases,
-        selected_databases=selected_databases,
-        llm_models=models,
-        selected_model=selected_model,
-        question=question,
-        proc_call_text=proc_call_text,
-        sql_text=sql_text,
-        table_names=table_names,
-        result_tables=result_tables,
-        docs_url="https://dev.mysql.com/doc/heatwave/en/mys-hw-genai-nl-sql.html",
-    )
-
-
-@app.route("/vision", methods=["GET", "POST"])
-@login_required
-def vision_page():
-    answer = ""
-    question = ""
-    preview_data_url = ""
-    llm_models = []
-    selected_model = ""
-
-    try:
-        llm_models = get_vision_models()
-        selected_model = choose_default_model(llm_models)
-
-        if request.method == "POST":
-            question = request.form.get("question", "").strip()
-            selected_model = request.form.get("llm", "").strip() or selected_model
-            uploaded_file = request.files.get("image_file")
-
-            if not uploaded_file or not uploaded_file.filename:
-                flash("Upload an image file.", "warning")
-            elif not question:
-                flash("Enter a question.", "warning")
-            elif not selected_model:
-                flash("No supported generation models were found for this connection.", "error")
-            else:
-                image_bytes = uploaded_file.read()
-                mime_type = uploaded_file.mimetype or "image/png"
-                encoded_image = base64.b64encode(image_bytes).decode("utf-8")
-                preview_data_url = "data:{mime};base64,{body}".format(
-                    mime=mime_type,
-                    body=encoded_image,
-                )
-                raw_response = answer_query_on_image(question, selected_model, encoded_image)
-                payload = json.loads(raw_response or "{}")
-                answer = payload.get("text", "")
-    except mysql.connector.Error as error:
-        flash(str(error), "error")
-    except json.JSONDecodeError:
-        flash("The vision response could not be parsed.", "error")
-
-    return render_dashboard(
-        "vision.html",
-        page_title="HWVision",
-        llm_models=llm_models,
-        selected_model=selected_model,
-        question=question,
-        answer=answer,
-        preview_data_url=preview_data_url,
-    )
 
 
 def get_heatwave_performance_table_counts():
@@ -1479,57 +2531,15 @@ def execute_heatwave_performance_query(sql_text):
             cnx.close()
 
 
-@app.route("/heatwave-performance", methods=["GET", "POST"])
-@login_required
-def heatwave_performance_page():
-    active_tab = request.values.get("tab", "innodb").strip().lower()
-    if active_tab not in HEATWAVE_PERFORMANCE_SQL:
-        active_tab = "innodb"
-    sql_text = HEATWAVE_PERFORMANCE_SQL[active_tab]
-
-    try:
-        if not airportdb_exists(autocommit=True):
-            flash("The HeatWave Performance page is available only when schema `airportdb` exists.", "warning")
-            return redirect(url_for("home"))
-
-        table_counts = get_heatwave_performance_table_counts()
-        result_table = {"columns": [], "rows": []}
-        execution_timing = None
-        query_executed = False
-        autocommit_value = get_session_autocommit_value()
-        explain_plan = {"columns": [], "rows": []}
-
-        if request.method == "POST":
-            sql_text = request.form.get("sql_text", "").strip() or sql_text
-            result_table, execution_timing, autocommit_value = execute_heatwave_performance_query(sql_text)
-            query_executed = True
-            explain_plan = explain_heatwave_performance_query(sql_text)
-    except mysql.connector.Error as error:
-        flash(str(error), "error")
-        table_counts = []
-        explain_plan = {"columns": [], "rows": []}
-        result_table = {"columns": [], "rows": []}
-        execution_timing = None
-        query_executed = request.method == "POST"
-        autocommit_value = None
-
-    return render_dashboard(
-        "heatwave_performance.html",
-        page_title="HeatWave Performance",
-        active_tab=active_tab,
-        active_tab_label="InnoDB" if active_tab == "innodb" else "RAPID engine",
-        tabs=[
-            {"id": "innodb", "label": "InnoDB"},
-            {"id": "rapid", "label": "RAPID engine"},
-        ],
-        sql_text=sql_text,
-        explain_plan=explain_plan,
-        table_counts=table_counts,
-        result_table=result_table,
-        execution_timing=execution_timing,
-        query_executed=query_executed,
-        autocommit_value=autocommit_value,
-    )
+import pages.auth  # noqa: F401
+import pages.connection_profile  # noqa: F401
+import pages.db_admin  # noqa: F401
+import pages.heatwave_performance  # noqa: F401
+import pages.home  # noqa: F401
+import pages.import_page  # noqa: F401
+import pages.nlsql  # noqa: F401
+import pages.setup_configdb  # noqa: F401
+import pages.vision  # noqa: F401
 
 
 if __name__ == "__main__":
