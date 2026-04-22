@@ -220,7 +220,8 @@ Profiles are stored in `profiles.json`. Only non-secret connection details are s
 
 ### HeatWave ML
 
-- The page includes an `Iris` tab that initializes `ml_data.iris_train`, `ml_data.iris_test`, and `ml_data.iris_validate`.
+- The page includes an `Iris` tab and an `NL2ML` tab.
+- The `Iris` tab initializes `ml_data.iris_train`, `ml_data.iris_test`, and `ml_data.iris_validate`.
 - `Initialize IrisDB` recreates schema `ml_data` and clears `ML_SCHEMA_<user>.MODEL_CATALOG` for `iris_model` before loading the demo tables.
 - Action buttons show the SQL or procedure syntax in the info row before the request is submitted, then append timing after the request finishes.
 - `Execute ML_TRAIN` runs `CALL sys.ML_TRAIN('ml_data.iris_train', 'class', JSON_OBJECT('task', 'classification', 'exclude_column_list', JSON_ARRAY('my_row_id')), @model);`.
@@ -229,6 +230,13 @@ Profiles are stored in `profiles.json`. Only non-secret connection details are s
 - `Execute ML_PREDICT_TABLE` runs against `ml_data.iris_test`, refreshes the left panel with `iris_test`, and shows `ml_data.iris_predictions` on the right.
 - `Execute ML_SCORE` runs `CALL sys.ML_SCORE('ml_data.iris_validate', 'class', @iris_model, 'balanced_accuracy', @score, NULL);` and shows `@score` in form view.
 - `Execute ML_EXPLAIN_TABLE` runs `CALL sys.ML_EXPLAIN_TABLE('ml_data.iris_test', @iris_model, 'ml_data.iris_explanations', JSON_OBJECT('prediction_explainer', 'permutation_importance'));` and shows `iris_explanations` in form view.
+- The `NL2ML` tab uses a left/right layout.
+- The left panel lets you choose a supported generation LLM, toggle `Keep history`, enter a prompt question, and click `Generate`.
+- `Generate` only constructs the SQL for `SET @nl2ml_options ...` and `CALL sys.NL2ML(..., @output);`. It does not execute the SQL.
+- The right panel shows the editable generated SQL, an `Execute` button, timing, and tabbed output.
+- After execution, the tab view shows returned result sets plus `@output` and `@nl2ml_options`.
+- The `@output` tab formats the JSON `text` field with preserved line breaks.
+- The `@nl2ml_options` tab parses array values into tables. For `chat_history`, the table is pivoted into `user message` and `chat_bot_message` columns.
 
 ### HeatWave LH/External Table
 
@@ -240,6 +248,11 @@ Profiles are stored in `profiles.json`. Only non-secret connection details are s
 
 ### DB Admin
 
-- The `HeatWave ML Query` tab includes a `Current ML running connection only` filter.
+- The old `HeatWave Performance Query`, `HeatWave ML Query`, and `HW Table Load Recovery` tabs are consolidated into one `Monitoring` tab.
+- The `Monitoring` tab includes 3 buttons to switch between those views.
+- The selected monitoring button is highlighted in dark red. The inactive buttons keep the red gradient style.
+- The `Monitoring` toolbar includes a `Refresh` button and an `Auto Refresh` dropdown with `2s`, `5s`, `30s`, `60s`, and `none`.
+- When an auto-refresh interval is selected, the monitoring view refreshes automatically using the selected interval.
+- The `HeatWave ML Query` monitoring view includes a `Current ML running connection only` filter.
 - When that filter is enabled, the main query appends `connection_id = (select id from performance_schema.processlist where info like 'SET rapid_ml_operation%')`.
 - When the filter is enabled, the page also shows a second detail table for the latest current-running ML query, including the full `QEXEC_TEXT`.

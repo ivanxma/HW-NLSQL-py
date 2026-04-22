@@ -37,10 +37,13 @@ DB_ADMIN_TABS = [
     {"id": "db", "label": "DB"},
     {"id": "table", "label": "Table"},
     {"id": "hw-tables", "label": "HW Tables"},
-    {"id": "heatwave-performance-query", "label": "HeatWave Performance Query"},
-    {"id": "heatwave-ml-query", "label": "HeatWave ML Query"},
-    {"id": "hw-table-load-recovery", "label": "HW Table Load Recovery"},
+    {"id": "monitoring", "label": "Monitoring"},
 ]
+DB_ADMIN_MONITORING_VIEWS = {
+    "heatwave-performance-query",
+    "heatwave-ml-query",
+    "hw-table-load-recovery",
+}
 MYSQL_TYPE_OPTIONS = [
     {"name": "INT", "label": "INT", "param_mode": "none", "param_placeholder": ""},
     {"name": "BIGINT", "label": "BIGINT", "param_mode": "none", "param_placeholder": ""},
@@ -1111,6 +1114,8 @@ def _default_import_form():
 
 def _normalize_db_admin_tab(value):
     tab = str(value or "db").strip().lower()
+    if tab in DB_ADMIN_MONITORING_VIEWS:
+        return "monitoring"
     return tab if tab in {item["id"] for item in DB_ADMIN_TABS} else "db"
 
 
@@ -2468,7 +2473,7 @@ def _build_csv_response(filename, columns, rows):
     )
 
 
-def _build_db_admin_download_payload(active_tab, selected_database, current_ml_connection_only=False):
+def _build_db_admin_download_payload(active_tab, selected_database, monitor_view="heatwave-performance-query", current_ml_connection_only=False):
     if active_tab == "db":
         inventory = fetch_database_inventory()
         return (
@@ -2497,6 +2502,11 @@ def _build_db_admin_download_payload(active_tab, selected_database, current_ml_c
     if active_tab == "hw-tables":
         report = fetch_heatwave_tables_report()
         return ("db-admin-hw-tables.csv", report["columns"], report["rows"])
+    if active_tab == "monitoring":
+        selected_monitor_view = str(monitor_view or "heatwave-performance-query").strip().lower()
+        if selected_monitor_view not in DB_ADMIN_MONITORING_VIEWS:
+            selected_monitor_view = "heatwave-performance-query"
+        active_tab = selected_monitor_view
     if active_tab == "heatwave-performance-query":
         report = fetch_heatwave_performance_queries()
         return ("db-admin-heatwave-performance-query.csv", report["columns"], report["rows"])

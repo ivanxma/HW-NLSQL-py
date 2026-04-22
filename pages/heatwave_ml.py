@@ -7,6 +7,7 @@ from flask import flash, request, session
 
 from app_context import (
     _database_exists,
+    _mysql_quote,
     _normalize_modal_cell,
     _quote_identifier,
     _table_exists,
@@ -208,6 +209,9 @@ IRIS_ML_EXPLAIN_TABLE_CALL_TEXT = (
     "CALL sys.ML_EXPLAIN_TABLE('ml_data.iris_test', @iris_model, "
     "'ml_data.iris_explanations', JSON_OBJECT('prediction_explainer', 'permutation_importance'));"
 )
+NL2ML_DOCS_URL = "https://dev.mysql.com/doc/heatwave/en/mys-hwaml-nl2ml.html"
+NL2ML_DEFAULT_PROMPT = "How to do HeatWave Training with dataset ml_data.iris_train."
+NL2ML_OUTPUT_VAR = "@output"
 
 
 def _iris_insert_sql(table_name):
@@ -335,6 +339,304 @@ def _consume_pending_results(cursor):
     while cursor.nextset():
         if cursor.with_rows:
             cursor.fetchall()
+
+
+def _fetch_supported_generation_llms():
+    rows = run_sql(
+        """
+        select model_id
+        from sys.ML_SUPPORTED_LLMS
+        where capabilities->>"$[0]" = 'GENERATION'
+        order by model_id
+        """,
+        include_database=False,
+    )
+    return [str(row[0]).strip() for row in rows if row and row[0]]
+
+
+def _normalize_text_value(value):
+    normalized = _normalize_modal_cell(value)
+    return "" if normalized == "" else str(normalized)
+
+
+def _parse_json_value(value):
+    if isinstance(value, (dict, list)):
+        return value
+    text = _normalize_text_value(value).strip()
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+
+def _format_json_value(value):
+    parsed = _parse_json_value(value)
+    if parsed is not None:
+        return json.dumps(parsed, indent=2)
+    return _normalize_text_value(value)
+
+
+def _build_json_fields(value):
+    parsed = _parse_json_value(value)
+    if isinstance(parsed, dict):
+        return [
+            {"label": str(key), "value": _format_json_value(item_value)}
+            for key, item_value in parsed.items()
+        ]
+    if isinstance(parsed, list):
+        return [
+            {"label": "Item {}".format(index + 1), "value": _format_json_value(item_value)}
+            for index, item_value in enumerate(parsed)
+        ]
+    return []
+
+
+def _normalize_multiline_text(value):
+    return _normalize_text_value(value).replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def _build_json_array_table(title, items):
+    normalized_items = items if isinstance(items, list) else []
+    if not normalized_items:
+        return {
+            "title": title,
+            "columns": [],
+            "rows": [],
+        }
+
+    title_text = str(title or "").strip().lower()
+    if (
+        title_text == "chat_history"
+        and all(isinstance(item, dict) for item in normalized_items)
+        and all({"role", "content"}.issubset(set(item.keys())) for item in normalized_items)
+    ):
+        rows = []
+        current_row = {"user message": "", "chat_bot_message": ""}
+        has_values = False
+        for item in normalized_items:
+            role_value = str(item.get("role", "")).strip().lower()
+            content_value = _format_json_value(item.get("content", ""))
+            if role_value == "user":
+                if has_values:
+                    rows.append([current_row["user message"], current_row["chat_bot_message"]])
+                    current_row = {"user message": "", "chat_bot_message": ""}
+                    has_values = False
+                current_row["user message"] = content_value
+                has_values = True
+            elif role_value == "assistant":
+                current_row["chat_bot_message"] = content_value
+                has_values = True
+                rows.append([current_row["user message"], current_row["chat_bot_message"]])
+                current_row = {"user message": "", "chat_bot_message": ""}
+                has_values = False
+            else:
+                if has_values:
+                    rows.append([current_row["user message"], current_row["chat_bot_message"]])
+                rows.append([_format_json_value(item), ""])
+                current_row = {"user message": "", "chat_bot_message": ""}
+                has_values = False
+        if has_values:
+            rows.append([current_row["user message"], current_row["chat_bot_message"]])
+        return {
+            "title": title,
+            "columns": ["user message", "chat_bot_message"],
+            "rows": rows,
+        }
+
+    if all(isinstance(item, dict) for item in normalized_items):
+        columns = []
+        seen_columns = set()
+        for item in normalized_items:
+            for key in item.keys():
+                key_text = str(key)
+                if key_text not in seen_columns:
+                    seen_columns.add(key_text)
+                    columns.append(key_text)
+        rows = []
+        for item in normalized_items:
+            rows.append([_format_json_value(item.get(column, "")) for column in columns])
+        return {
+            "title": title,
+            "columns": columns,
+            "rows": rows,
+        }
+
+    return {
+        "title": title,
+        "columns": ["Value"],
+        "rows": [[_format_json_value(item)] for item in normalized_items],
+    }
+
+
+def _build_nl2ml_variable_result(title, value):
+    raw_text = _normalize_text_value(value).strip()
+    parsed = _parse_json_value(raw_text)
+    response_text = ""
+    fields = _build_json_fields(raw_text)
+    array_tables = []
+    if isinstance(parsed, dict) and isinstance(parsed.get("text"), str):
+        response_text = _normalize_multiline_text(parsed.get("text"))
+        fields = [
+            {"label": str(key), "value": _format_json_value(item_value)}
+            for key, item_value in parsed.items()
+            if str(key) != "text" and not isinstance(item_value, list)
+        ]
+        for key, item_value in parsed.items():
+            if isinstance(item_value, list):
+                array_tables.append(_build_json_array_table(str(key), item_value))
+    elif isinstance(parsed, dict):
+        fields = [
+            {"label": str(key), "value": _format_json_value(item_value)}
+            for key, item_value in parsed.items()
+            if not isinstance(item_value, list)
+        ]
+        for key, item_value in parsed.items():
+            if isinstance(item_value, list):
+                array_tables.append(_build_json_array_table(str(key), item_value))
+    elif isinstance(parsed, list):
+        fields = []
+        array_tables.append(_build_json_array_table("Entries", parsed))
+    return {
+        "title": title,
+        "raw_text": raw_text,
+        "pretty_text": _format_json_value(raw_text) if raw_text else "",
+        "response_text": response_text,
+        "fields": fields,
+        "array_tables": array_tables,
+    }
+
+
+def _build_nl2ml_generated_sql(question_text, model_id, keep_chat_history, prior_options_text=""):
+    normalized_question = str(question_text or "").strip()
+    if not normalized_question:
+        raise ValueError("Enter an NL2ML prompt before generating SQL.")
+    normalized_model_id = str(model_id or "").strip()
+    if not normalized_model_id:
+        raise ValueError("Choose an LLM before generating SQL.")
+
+    statements = []
+    prior_options = _normalize_text_value(prior_options_text).strip()
+    if keep_chat_history and prior_options:
+        statements.append(
+            "SET @nl2ml_options = CAST({} AS JSON);".format(_mysql_quote(prior_options))
+        )
+        statements.append(
+            "SET @nl2ml_options = JSON_SET(COALESCE(@nl2ml_options, JSON_OBJECT()), '$.model_id', {});".format(
+                _mysql_quote(normalized_model_id)
+            )
+        )
+    elif keep_chat_history:
+        statements.append(
+            "SET @nl2ml_options = JSON_SET(COALESCE(@nl2ml_options, JSON_OBJECT()), '$.model_id', {});".format(
+                _mysql_quote(normalized_model_id)
+            )
+        )
+    else:
+        statements.append(
+            'SET @nl2ml_options = JSON_OBJECT("model_id", {});'.format(
+                _mysql_quote(normalized_model_id)
+            )
+        )
+
+    statements.append(
+        "CALL sys.NL2ML({}, {});".format(
+            _mysql_quote(normalized_question),
+            NL2ML_OUTPUT_VAR,
+        )
+    )
+    return "\n".join(statements)
+
+
+def _build_nl2ml_result_tabs(result_sets, output_variable=None, options_variable=None):
+    tabs = []
+    for index, dataset in enumerate(result_sets, start=1):
+        tabs.append(
+            {
+                "id": "result-set-{}".format(index),
+                "label": dataset.get("title") or "Result Set {}".format(index),
+                "kind": "result_set",
+                "dataset": dataset,
+            }
+        )
+    if output_variable is not None:
+        tabs.append(
+            {
+                "id": "output-variable",
+                "label": output_variable["title"],
+                "kind": "variable",
+                "variable": output_variable,
+            }
+        )
+    if options_variable is not None:
+        tabs.append(
+            {
+                "id": "options-variable",
+                "label": options_variable["title"],
+                "kind": "variable",
+                "variable": options_variable,
+            }
+        )
+    return tabs
+
+
+def _execute_nl2ml_sql(sql_text):
+    normalized_sql = str(sql_text or "").strip()
+    if not normalized_sql:
+        raise ValueError("Generate or enter SQL before executing.")
+
+    started_at = datetime.now(timezone.utc)
+    started_counter = time.perf_counter()
+    cnx = None
+    cursor = None
+    try:
+        cnx = mysql_connection(get_connection_config(include_database=False))
+        result_sets = []
+        for result_index, result in enumerate(cnx.cmd_query_iter(normalized_sql), start=1):
+            if "columns" not in result:
+                continue
+            rows, _ = cnx.get_rows()
+            result_sets.append(
+                {
+                    "title": "Result Set {}".format(result_index),
+                    "columns": [str(column[0]) for column in result.get("columns", [])],
+                    "rows": [[_normalize_modal_cell(value) for value in row] for row in rows],
+                }
+            )
+
+        cursor = cnx.cursor()
+        cursor.execute(
+            "select cast(@output as char) as output_value, cast(@nl2ml_options as char) as options_value"
+        )
+        row = cursor.fetchone() or ("", "")
+        output_value = row[0] if len(row) > 0 else ""
+        options_value = row[1] if len(row) > 1 else ""
+        cnx.commit()
+        finished_at = datetime.now(timezone.utc)
+        return {
+            "started_at": started_at,
+            "finished_at": finished_at,
+            "elapsed_seconds": time.perf_counter() - started_counter,
+            "result_sets": result_sets,
+            "output_variable": _build_nl2ml_variable_result(NL2ML_OUTPUT_VAR, output_value),
+            "options_variable": _build_nl2ml_variable_result("@nl2ml_options", options_value),
+            "options_raw_text": _normalize_text_value(options_value).strip(),
+        }
+    except (ValueError, mysql.connector.Error):
+        if cnx:
+            cnx.rollback()
+        raise
+    finally:
+        if cursor:
+            cursor.close()
+        if cnx and cnx.is_connected():
+            try:
+                cnx.consume_results()
+            except mysql.connector.Error:
+                pass
+        if cnx and cnx.is_connected():
+            cnx.close()
 
 
 def _initialize_iris_database():
@@ -610,13 +912,25 @@ def _execute_iris_ml_explain_table():
 @login_required
 def heatwave_ml_page():
     active_tab = request.values.get("tab", "iris").strip().lower()
-    if active_tab != "iris":
+    if active_tab not in {"iris", "nl2ml"}:
         active_tab = "iris"
 
     current_action = ""
     init_result = None
     train_result = None
     action_result = None
+    supported_generation_llms = []
+    selected_nl2ml_model = str(request.values.get("nl2ml_model_id", "")).strip()
+    keep_nl2ml_chat_history = str(request.values.get("nl2ml_keep_chat_history", "")).strip().lower() in {"1", "true", "yes", "on"}
+    nl2ml_prompt = str(request.values.get("nl2ml_prompt", NL2ML_DEFAULT_PROMPT)).strip() or NL2ML_DEFAULT_PROMPT
+    nl2ml_sql_text = str(request.values.get("nl2ml_sql_text", "")).strip()
+    nl2ml_options_raw_text = str(request.values.get("nl2ml_options_raw_text", "")).strip()
+    nl2ml_result_sets = []
+    nl2ml_output_variable = None
+    nl2ml_options_variable = None
+    nl2ml_result_tabs = []
+    nl2ml_generation_result = None
+    nl2ml_execution_result = None
     left_panel_table = {"columns": [], "rows": []}
     left_panel_title = "iris_train Content"
     left_panel_empty_text = "Initialize IrisDB to create and view `ml_data.iris_train`."
@@ -633,111 +947,154 @@ def heatwave_ml_page():
     iris_ready = False
 
     try:
+        supported_generation_llms = _fetch_supported_generation_llms()
+        if selected_nl2ml_model not in supported_generation_llms:
+            selected_nl2ml_model = supported_generation_llms[0] if supported_generation_llms else ""
+
         if request.method == "POST":
             current_action = request.form.get("heatwave_ml_action", "").strip()
-            if current_action == "initialize_iris":
-                init_result = _initialize_iris_database()
-                flash("Schema `ml_data` and the Iris demo tables were initialized.", "success")
-            elif current_action == "execute_ml_train":
-                ml_call_text = IRIS_ML_TRAIN_CALL_TEXT
-                ml_call_title = "ML_TRAIN Syntax"
-                if not _table_exists("ml_data", "iris_train"):
-                    raise ValueError("Initialize IrisDB before running ML_TRAIN.")
-                train_result = _execute_iris_ml_train()
-                action_result = train_result
-                model_catalog = train_result["model_catalog"]
-                model_catalog_records = _build_model_catalog_records(model_catalog)
-                ml_schema_name = train_result["ml_schema_name"]
-                flash("ML_TRAIN finished for model `iris_model`.", "success")
-            elif current_action == "execute_ml_model_load":
-                ml_call_text = IRIS_ML_MODEL_LOAD_CALL_TEXT
-                ml_call_title = "ML_MODEL_LOAD Syntax"
-                action_result = _execute_iris_ml_model_load()
-                flash("ML_MODEL_LOAD finished for model `iris_model`.", "success")
-            elif current_action == "execute_ml_predict_row":
-                ml_call_text = IRIS_ML_PREDICT_ROW_CALL_TEXT
-                ml_call_title = "ML_PREDICT_ROW Syntax"
-                action_result = _execute_iris_ml_predict_row()
-                prediction_records = action_result["prediction_records"]
-                flash("ML_PREDICT_ROW finished for model `iris_model`.", "success")
-            elif current_action == "execute_ml_predict_table":
-                ml_call_text = IRIS_ML_PREDICT_TABLE_CALL_TEXT
-                ml_call_title = "ML_PREDICT_TABLE Syntax"
-                left_panel_title = "iris_test Content"
-                left_panel_empty_text = "No rows returned from `ml_data.iris_test`."
-                if not _table_exists("ml_data", "iris_test"):
-                    raise ValueError("Initialize IrisDB before running ML_PREDICT_TABLE.")
-                if _table_exists("ml_data", "iris_test"):
+            if active_tab == "iris":
+                if current_action == "initialize_iris":
+                    init_result = _initialize_iris_database()
+                    flash("Schema `ml_data` and the Iris demo tables were initialized.", "success")
+                elif current_action == "execute_ml_train":
+                    ml_call_text = IRIS_ML_TRAIN_CALL_TEXT
+                    ml_call_title = "ML_TRAIN Syntax"
+                    if not _table_exists("ml_data", "iris_train"):
+                        raise ValueError("Initialize IrisDB before running ML_TRAIN.")
+                    train_result = _execute_iris_ml_train()
+                    action_result = train_result
+                    model_catalog = train_result["model_catalog"]
+                    model_catalog_records = _build_model_catalog_records(model_catalog)
+                    ml_schema_name = train_result["ml_schema_name"]
+                    flash("ML_TRAIN finished for model `iris_model`.", "success")
+                elif current_action == "execute_ml_model_load":
+                    ml_call_text = IRIS_ML_MODEL_LOAD_CALL_TEXT
+                    ml_call_title = "ML_MODEL_LOAD Syntax"
+                    action_result = _execute_iris_ml_model_load()
+                    flash("ML_MODEL_LOAD finished for model `iris_model`.", "success")
+                elif current_action == "execute_ml_predict_row":
+                    ml_call_text = IRIS_ML_PREDICT_ROW_CALL_TEXT
+                    ml_call_title = "ML_PREDICT_ROW Syntax"
+                    action_result = _execute_iris_ml_predict_row()
+                    prediction_records = action_result["prediction_records"]
+                    flash("ML_PREDICT_ROW finished for model `iris_model`.", "success")
+                elif current_action == "execute_ml_predict_table":
+                    ml_call_text = IRIS_ML_PREDICT_TABLE_CALL_TEXT
+                    ml_call_title = "ML_PREDICT_TABLE Syntax"
+                    left_panel_title = "iris_test Content"
+                    left_panel_empty_text = "No rows returned from `ml_data.iris_test`."
+                    if not _table_exists("ml_data", "iris_test"):
+                        raise ValueError("Initialize IrisDB before running ML_PREDICT_TABLE.")
+                    if _table_exists("ml_data", "iris_test"):
+                        left_panel_table = _fetch_named_table("ml_data", "iris_test")
+                    action_result = _execute_iris_ml_predict_table()
+                    left_panel_table = action_result["source_table"]
+                    left_panel_title = "iris_test Content"
+                    left_panel_empty_text = "No rows returned from `ml_data.iris_test`."
+                    predictions_table = action_result["predictions_table"]
+                    flash("ML_PREDICT_TABLE finished for output table `ml_data.iris_predictions`.", "success")
+                elif current_action == "execute_ml_score":
+                    ml_call_text = IRIS_ML_SCORE_CALL_TEXT
+                    ml_call_title = "ML_SCORE Syntax"
+                    action_result = _execute_iris_ml_score()
+                    score_records = action_result["score_records"]
+                    flash("ML_SCORE finished for metric `balanced_accuracy`.", "success")
+                elif current_action == "execute_ml_explain_table":
+                    ml_call_text = IRIS_ML_EXPLAIN_TABLE_CALL_TEXT
+                    ml_call_title = "ML_EXPLAIN_TABLE Syntax"
+                    left_panel_title = "iris_test Content"
+                    left_panel_empty_text = "No rows returned from `ml_data.iris_test`."
+                    if not _table_exists("ml_data", "iris_test"):
+                        raise ValueError("Initialize IrisDB before running ML_EXPLAIN_TABLE.")
                     left_panel_table = _fetch_named_table("ml_data", "iris_test")
-                action_result = _execute_iris_ml_predict_table()
-                left_panel_table = action_result["source_table"]
-                left_panel_title = "iris_test Content"
-                left_panel_empty_text = "No rows returned from `ml_data.iris_test`."
-                predictions_table = action_result["predictions_table"]
-                flash("ML_PREDICT_TABLE finished for output table `ml_data.iris_predictions`.", "success")
-            elif current_action == "execute_ml_score":
-                ml_call_text = IRIS_ML_SCORE_CALL_TEXT
-                ml_call_title = "ML_SCORE Syntax"
-                action_result = _execute_iris_ml_score()
-                score_records = action_result["score_records"]
-                flash("ML_SCORE finished for metric `balanced_accuracy`.", "success")
-            elif current_action == "execute_ml_explain_table":
-                ml_call_text = IRIS_ML_EXPLAIN_TABLE_CALL_TEXT
-                ml_call_title = "ML_EXPLAIN_TABLE Syntax"
-                left_panel_title = "iris_test Content"
-                left_panel_empty_text = "No rows returned from `ml_data.iris_test`."
-                if not _table_exists("ml_data", "iris_test"):
-                    raise ValueError("Initialize IrisDB before running ML_EXPLAIN_TABLE.")
-                left_panel_table = _fetch_named_table("ml_data", "iris_test")
-                action_result = _execute_iris_ml_explain_table()
-                left_panel_table = action_result["source_table"]
-                explanations_table = action_result["explanations_table"]
-                explanation_records = _build_table_records(explanations_table)
-                flash("ML_EXPLAIN_TABLE finished for output table `ml_data.iris_explanations`.", "success")
-            elif current_action:
-                raise ValueError("Unsupported HeatWave ML action.")
-
-        iris_ready = _database_exists("ml_data") and _table_exists("ml_data", "iris_train")
-        if iris_ready and not left_panel_table["columns"]:
-            left_panel_table = _fetch_iris_train_table()
-        if not model_catalog["columns"] and ml_schema_name:
-            model_catalog = _fetch_model_catalog(ml_schema_name)
-        if not model_catalog_records and model_catalog["columns"]:
-            model_catalog_records = _build_model_catalog_records(model_catalog)
-    except (ValueError, mysql.connector.Error) as error:
-        flash(str(error), "error")
-        try:
-            iris_ready = _database_exists("ml_data") and _table_exists("ml_data", "iris_train")
-            if current_action == "execute_ml_predict_table":
-                left_panel_title = "iris_test Content"
-                left_panel_empty_text = "No rows returned from `ml_data.iris_test`."
-                if _table_exists("ml_data", "iris_test"):
-                    left_panel_table = _fetch_named_table("ml_data", "iris_test")
-                if _table_exists("ml_data", "iris_predictions"):
-                    predictions_table = _fetch_named_table("ml_data", "iris_predictions")
-            elif current_action == "execute_ml_explain_table":
-                left_panel_title = "iris_test Content"
-                left_panel_empty_text = "No rows returned from `ml_data.iris_test`."
-                if _table_exists("ml_data", "iris_test"):
-                    left_panel_table = _fetch_named_table("ml_data", "iris_test")
-                if _table_exists("ml_data", "iris_explanations"):
-                    explanations_table = _fetch_named_table("ml_data", "iris_explanations")
+                    action_result = _execute_iris_ml_explain_table()
+                    left_panel_table = action_result["source_table"]
+                    explanations_table = action_result["explanations_table"]
                     explanation_records = _build_table_records(explanations_table)
-            elif iris_ready and not left_panel_table["columns"]:
-                left_panel_table = _fetch_iris_train_table()
+                    flash("ML_EXPLAIN_TABLE finished for output table `ml_data.iris_explanations`.", "success")
+                elif current_action:
+                    raise ValueError("Unsupported HeatWave ML action.")
+            elif active_tab == "nl2ml":
+                if current_action == "generate_nl2ml":
+                    nl2ml_sql_text = _build_nl2ml_generated_sql(
+                        nl2ml_prompt,
+                        selected_nl2ml_model,
+                        keep_nl2ml_chat_history,
+                        nl2ml_options_raw_text,
+                    )
+                    nl2ml_generation_result = {"sql_text": nl2ml_sql_text}
+                    flash("Generated NL2ML SQL. Review it before executing.", "success")
+                elif current_action == "execute_nl2ml_sql":
+                    nl2ml_execution_result = _execute_nl2ml_sql(nl2ml_sql_text)
+                    nl2ml_result_sets = nl2ml_execution_result["result_sets"]
+                    nl2ml_output_variable = nl2ml_execution_result["output_variable"]
+                    nl2ml_options_variable = nl2ml_execution_result["options_variable"]
+                    nl2ml_options_raw_text = nl2ml_execution_result["options_raw_text"]
+                    nl2ml_result_tabs = _build_nl2ml_result_tabs(
+                        nl2ml_result_sets,
+                        nl2ml_output_variable,
+                        nl2ml_options_variable,
+                    )
+                    flash("Executed NL2ML SQL.", "success")
+                elif current_action:
+                    raise ValueError("Unsupported NL2ML action.")
 
+        if active_tab == "iris":
+            iris_ready = _database_exists("ml_data") and _table_exists("ml_data", "iris_train")
+            if iris_ready and not left_panel_table["columns"]:
+                left_panel_table = _fetch_iris_train_table()
             if not model_catalog["columns"] and ml_schema_name:
                 model_catalog = _fetch_model_catalog(ml_schema_name)
             if not model_catalog_records and model_catalog["columns"]:
                 model_catalog_records = _build_model_catalog_records(model_catalog)
+    except (ValueError, mysql.connector.Error) as error:
+        flash(str(error), "error")
+        try:
+            if active_tab == "iris":
+                iris_ready = _database_exists("ml_data") and _table_exists("ml_data", "iris_train")
+                if current_action == "execute_ml_predict_table":
+                    left_panel_title = "iris_test Content"
+                    left_panel_empty_text = "No rows returned from `ml_data.iris_test`."
+                    if _table_exists("ml_data", "iris_test"):
+                        left_panel_table = _fetch_named_table("ml_data", "iris_test")
+                    if _table_exists("ml_data", "iris_predictions"):
+                        predictions_table = _fetch_named_table("ml_data", "iris_predictions")
+                elif current_action == "execute_ml_explain_table":
+                    left_panel_title = "iris_test Content"
+                    left_panel_empty_text = "No rows returned from `ml_data.iris_test`."
+                    if _table_exists("ml_data", "iris_test"):
+                        left_panel_table = _fetch_named_table("ml_data", "iris_test")
+                    if _table_exists("ml_data", "iris_explanations"):
+                        explanations_table = _fetch_named_table("ml_data", "iris_explanations")
+                        explanation_records = _build_table_records(explanations_table)
+                elif iris_ready and not left_panel_table["columns"]:
+                    left_panel_table = _fetch_iris_train_table()
+
+                if not model_catalog["columns"] and ml_schema_name:
+                    model_catalog = _fetch_model_catalog(ml_schema_name)
+                if not model_catalog_records and model_catalog["columns"]:
+                    model_catalog_records = _build_model_catalog_records(model_catalog)
         except mysql.connector.Error:
             pass
 
     return render_dashboard(
         "heatwave_ml.html",
         page_title="HeatWave ML",
-        tabs=[{"id": "iris", "label": "Iris"}],
+        tabs=[{"id": "iris", "label": "Iris"}, {"id": "nl2ml", "label": "NL2ML"}],
         active_tab=active_tab,
+        supported_generation_llms=supported_generation_llms,
+        selected_nl2ml_model=selected_nl2ml_model,
+        keep_nl2ml_chat_history=keep_nl2ml_chat_history,
+        nl2ml_prompt=nl2ml_prompt,
+        nl2ml_sql_text=nl2ml_sql_text,
+        nl2ml_options_raw_text=nl2ml_options_raw_text,
+        nl2ml_result_sets=nl2ml_result_sets,
+        nl2ml_output_variable=nl2ml_output_variable,
+        nl2ml_options_variable=nl2ml_options_variable,
+        nl2ml_result_tabs=nl2ml_result_tabs,
+        nl2ml_generation_result=nl2ml_generation_result,
+        nl2ml_execution_result=nl2ml_execution_result,
         iris_ready=iris_ready,
         left_panel_table=left_panel_table,
         left_panel_title=left_panel_title,
@@ -761,6 +1118,6 @@ def heatwave_ml_page():
         ml_predict_table_call_text_default=IRIS_ML_PREDICT_TABLE_CALL_TEXT,
         ml_score_call_text_default=IRIS_ML_SCORE_CALL_TEXT,
         ml_explain_table_call_text_default=IRIS_ML_EXPLAIN_TABLE_CALL_TEXT,
-        docs_url=IRIS_DOCS_URL,
+        docs_url=IRIS_DOCS_URL if active_tab == "iris" else NL2ML_DOCS_URL,
         current_user_name=str(session.get("db_user", "")).strip(),
     )

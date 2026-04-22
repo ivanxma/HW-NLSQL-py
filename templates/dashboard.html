@@ -101,54 +101,67 @@
         </article>
       </section>
 
-      <section class="split-layout">
-        <article class="panel">
-          <h3>Connection Details</h3>
-          <dl class="detail-list">
-            <div>
-              <dt>Connection End Point</dt>
-              <dd>{{ server_info.connection_endpoint }}</dd>
-            </div>
-            <div>
-              <dt>User</dt>
-              <dd>{{ server_info.user }}</dd>
-            </div>
-            <div>
-              <dt>Default Database</dt>
-              <dd>{{ server_info.default_database }}</dd>
-            </div>
-            <div>
-              <dt>MySQL Version</dt>
-              <dd>{{ server_info.server_version }}</dd>
-            </div>
-            <div>
-              <dt>Uptime</dt>
-              <dd>{{ server_info.uptime }}</dd>
-            </div>
-          </dl>
-        </article>
+      <section class="panel">
+        <h3>Connection Details</h3>
+        <dl class="detail-list detail-list-inline dashboard-summary-list">
+          <div>
+            <dt>Connection End Point</dt>
+            <dd>{{ server_info.connection_endpoint }}</dd>
+          </div>
+          <div>
+            <dt>User</dt>
+            <dd>{{ server_info.user }}</dd>
+          </div>
+          <div>
+            <dt>Default Database</dt>
+            <dd>{{ server_info.default_database }}</dd>
+          </div>
+          <div>
+            <dt>MySQL Version</dt>
+            <dd>{{ server_info.server_version }}</dd>
+          </div>
+          <div>
+            <dt>Uptime</dt>
+            <dd>{{ server_info.uptime }}</dd>
+          </div>
+        </dl>
+      </section>
 
-        <article class="panel">
-          <h3>HeatWave Summary</h3>
-          <dl class="detail-list">
-            <div>
-              <dt>Cluster Status</dt>
-              <dd>{{ heatwave.status }}</dd>
-            </div>
-            <div>
-              <dt>Node Count</dt>
-              <dd>{{ heatwave.node_count }}</dd>
-            </div>
-            <div>
-              <dt>Fully Loaded Tables</dt>
-              <dd>{{ heatwave.fully_loaded_count if heatwave.fully_loaded_count is not none else "Unavailable" }}</dd>
-            </div>
-            <div>
-              <dt>Partially Loaded Tables</dt>
-              <dd>{{ heatwave.partially_loaded_count if heatwave.partially_loaded_count is not none else "Unavailable" }}</dd>
-            </div>
-          </dl>
-        </article>
+      <section class="panel">
+        <h3>HeatWave Summary</h3>
+        <dl class="detail-list detail-list-inline dashboard-summary-list">
+          <div>
+            <dt>HeatWave Status</dt>
+            <dd>
+              <span class="status-badge {{ heatwave.traffic_light.state }}">
+                <span class="status-dot {{ heatwave.traffic_light.state }}"></span>
+                {{ heatwave.traffic_light.label }}
+              </span>
+            </dd>
+          </div>
+          <div>
+            <dt>Cluster Status</dt>
+            <dd>{{ heatwave.status }}</dd>
+          </div>
+          <div>
+            <dt>Node Count</dt>
+            <dd>{{ heatwave.node_count }}</dd>
+          </div>
+          <div>
+            <dt>Fully Loaded Tables</dt>
+            <dd>{{ heatwave.fully_loaded_count if heatwave.fully_loaded_count is not none else "Unavailable" }}</dd>
+          </div>
+          <div>
+            <dt>Partially Loaded Tables</dt>
+            <dd>{{ heatwave.partially_loaded_count if heatwave.partially_loaded_count is not none else "Unavailable" }}</dd>
+          </div>
+          {% for status_row in heatwave.global_statuses %}
+          <div>
+            <dt>{{ status_row.name }}</dt>
+            <dd>{{ status_row.value }}</dd>
+          </div>
+          {% endfor %}
+        </dl>
       </section>
 
       {% if server_info.errors %}

@@ -44,16 +44,31 @@ def _parse_checkbox_value(raw_value):
     return str(raw_value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _normalize_monitor_view(raw_value):
+    value = str(raw_value or "heatwave-performance-query").strip().lower()
+    if value not in {"heatwave-performance-query", "heatwave-ml-query", "hw-table-load-recovery"}:
+        return "heatwave-performance-query"
+    return value
+
+
+def _normalize_monitor_refresh(raw_value):
+    value = str(raw_value or "none").strip().lower()
+    return value if value in {"2", "5", "30", "60", "none"} else "none"
+
+
 @app.route("/db-admin/download", methods=["GET"])
 @login_required
 def db_admin_download():
-    active_tab = _normalize_db_admin_tab(request.args.get("tab", "db"))
+    raw_tab = str(request.args.get("tab", "db")).strip().lower()
+    active_tab = _normalize_db_admin_tab(raw_tab)
+    monitor_view = _normalize_monitor_view(request.args.get("monitor_view", raw_tab))
     selected_database = str(request.args.get("database", "")).strip()
     current_ml_connection_only = _parse_checkbox_value(request.args.get("current_ml_connection_only", ""))
     try:
         filename, columns, rows = _build_db_admin_download_payload(
             active_tab,
             selected_database,
+            monitor_view=monitor_view,
             current_ml_connection_only=current_ml_connection_only,
         )
         return _build_csv_response(filename, columns, rows)
@@ -64,6 +79,7 @@ def db_admin_download():
                 "db_admin_page",
                 tab=active_tab,
                 database=selected_database,
+                monitor_view=monitor_view,
                 current_ml_connection_only="1" if current_ml_connection_only else "0",
             )
         )
@@ -72,12 +88,15 @@ def db_admin_download():
 @app.route("/db-admin", methods=["GET", "POST"])
 @login_required
 def db_admin_page():
-    active_tab = _normalize_db_admin_tab(request.values.get("tab", "db"))
+    raw_requested_tab = str(request.values.get("tab", "db")).strip().lower()
+    active_tab = _normalize_db_admin_tab(raw_requested_tab)
     requested_database = str(request.values.get("database", "")).strip()
     requested_table = str(request.args.get("table", "")).strip()
     requested_browse_table = str(request.args.get("browse_table", "")).strip()
     requested_browse_page = str(request.args.get("browse_page", "1")).strip()
     requested_edit_column = str(request.values.get("edit_column", "")).strip()
+    selected_monitor_view = _normalize_monitor_view(request.values.get("monitor_view", raw_requested_tab))
+    selected_monitor_refresh = _normalize_monitor_refresh(request.values.get("monitor_refresh", "none"))
     current_ml_connection_only = _parse_checkbox_value(request.values.get("current_ml_connection_only", ""))
     table_form = _default_table_form()
     add_column_form = _default_column_form()
@@ -86,10 +105,13 @@ def db_admin_page():
 
     if request.method == "POST":
         action = str(request.form.get("db_admin_action", "")).strip()
-        active_tab = _normalize_db_admin_tab(request.form.get("tab", active_tab))
+        raw_post_tab = str(request.form.get("tab", active_tab)).strip().lower()
+        active_tab = _normalize_db_admin_tab(raw_post_tab)
         requested_database = str(request.form.get("database", requested_database)).strip()
         requested_table = str(request.form.get("table_name", requested_table)).strip()
         requested_edit_column = str(request.form.get("original_column_name", requested_edit_column)).strip()
+        selected_monitor_view = _normalize_monitor_view(request.form.get("monitor_view", raw_post_tab or selected_monitor_view))
+        selected_monitor_refresh = _normalize_monitor_refresh(request.form.get("monitor_refresh", selected_monitor_refresh))
 
         if action == "create_database":
             database_name = str(request.form.get("database_name", "")).strip()
@@ -284,14 +306,15 @@ def db_admin_page():
 
         if active_tab == "hw-tables":
             heatwave_tables_stats = fetch_heatwave_tables_report()
-        elif active_tab == "heatwave-performance-query":
-            heatwave_query_stats = fetch_heatwave_performance_queries()
-        elif active_tab == "heatwave-ml-query":
-            heatwave_ml_query_stats = fetch_heatwave_ml_queries(current_ml_connection_only=current_ml_connection_only)
-            if current_ml_connection_only:
-                heatwave_ml_current_detail_stats = fetch_heatwave_ml_current_running_detail()
-        elif active_tab == "hw-table-load-recovery":
-            heatwave_table_load_recovery_stats = fetch_heatwave_table_load_recovery()
+        elif active_tab == "monitoring":
+            if selected_monitor_view == "heatwave-performance-query":
+                heatwave_query_stats = fetch_heatwave_performance_queries()
+            elif selected_monitor_view == "heatwave-ml-query":
+                heatwave_ml_query_stats = fetch_heatwave_ml_queries(current_ml_connection_only=current_ml_connection_only)
+                if current_ml_connection_only:
+                    heatwave_ml_current_detail_stats = fetch_heatwave_ml_current_running_detail()
+            elif selected_monitor_view == "hw-table-load-recovery":
+                heatwave_table_load_recovery_stats = fetch_heatwave_table_load_recovery()
         elif selected_database and _database_exists(selected_database):
             tables = fetch_tables_for_database(selected_database)
             available_table_names = [row["table_name"] for row in tables]
@@ -358,6 +381,8 @@ def db_admin_page():
         selected_database_is_system=_is_system_database(selected_database) if selected_database else False,
         db_admin_modal_result=db_admin_modal_result,
         heatwave_tables_stats=heatwave_tables_stats,
+        selected_monitor_view=selected_monitor_view,
+        selected_monitor_refresh=selected_monitor_refresh,
         heatwave_query_stats=heatwave_query_stats,
         heatwave_ml_query_stats=heatwave_ml_query_stats,
         heatwave_ml_current_detail_stats=heatwave_ml_current_detail_stats,

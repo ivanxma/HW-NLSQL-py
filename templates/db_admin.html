@@ -367,13 +367,85 @@
         </table>
       </div>
     </section>
-    {% elif active_tab == "heatwave-performance-query" %}
+    {% elif active_tab == "monitoring" %}
     <section class="panel">
-      <h3>HeatWave Performance Query</h3>
+      <h3>Monitoring</h3>
+      {% if selected_monitor_view == "heatwave-performance-query" %}
       <p class="helper-text">Recent HeatWave execution details from <code>performance_schema.rpd_query_stats</code>.</p>
-      <div class="panel-actions">
-        <a class="button secondary" href="{{ url_for('db_admin_download', tab='heatwave-performance-query', database=selected_database) }}">Download CSV</a>
+      {% elif selected_monitor_view == "heatwave-ml-query" %}
+      <p class="helper-text">HeatWave ML query progress details from <code>performance_schema.rpd_query_stats</code>.</p>
+      {% else %}
+      <p class="helper-text">HeatWave table load recovery details from <code>performance_schema.rpd_tables</code> and <code>performance_schema.rpd_table_id</code>.</p>
+      {% endif %}
+      <div class="panel-actions monitoring-actions">
+        <form method="get" class="monitoring-toolbar" id="db-admin-monitoring-form">
+          <input type="hidden" name="tab" value="monitoring">
+          {% if selected_database %}
+          <input type="hidden" name="database" value="{{ selected_database }}">
+          {% endif %}
+          {% if selected_monitor_view != "heatwave-ml-query" and current_ml_connection_only %}
+          <input type="hidden" name="current_ml_connection_only" value="1">
+          {% endif %}
+          <div class="monitoring-button-row">
+            <button
+              class="button secondary monitor-toggle-button {% if selected_monitor_view == 'heatwave-performance-query' %}active{% endif %}"
+              type="submit"
+              name="monitor_view"
+              value="heatwave-performance-query"
+            >
+              HeatWave Performance Query
+            </button>
+            <button
+              class="button secondary monitor-toggle-button {% if selected_monitor_view == 'heatwave-ml-query' %}active{% endif %}"
+              type="submit"
+              name="monitor_view"
+              value="heatwave-ml-query"
+            >
+              HeatWave ML Query
+            </button>
+            <button
+              class="button secondary monitor-toggle-button {% if selected_monitor_view == 'hw-table-load-recovery' %}active{% endif %}"
+              type="submit"
+              name="monitor_view"
+              value="hw-table-load-recovery"
+            >
+              HW Table Load Recovery
+            </button>
+          </div>
+          <div class="monitoring-control-row">
+            <input type="hidden" name="monitor_view" value="{{ selected_monitor_view }}">
+            <label class="inline-field monitoring-refresh-field">
+              Auto Refresh
+              <select name="monitor_refresh" id="db-admin-monitor-refresh" data-monitor-refresh-select>
+                <option value="2" {% if selected_monitor_refresh == "2" %}selected{% endif %}>2s</option>
+                <option value="5" {% if selected_monitor_refresh == "5" %}selected{% endif %}>5s</option>
+                <option value="30" {% if selected_monitor_refresh == "30" %}selected{% endif %}>30s</option>
+                <option value="60" {% if selected_monitor_refresh == "60" %}selected{% endif %}>60s</option>
+                <option value="none" {% if selected_monitor_refresh == "none" %}selected{% endif %}>none</option>
+              </select>
+            </label>
+            {% if selected_monitor_view == "heatwave-ml-query" %}
+            <label class="checkbox-field monitoring-checkbox-field">
+              <input
+                type="checkbox"
+                name="current_ml_connection_only"
+                value="1"
+                {% if current_ml_connection_only %}checked{% endif %}
+              >
+              <span>Current ML running connection only</span>
+            </label>
+            {% endif %}
+            <button class="button secondary" type="submit">Refresh</button>
+            <a
+              class="button secondary"
+              href="{{ url_for('db_admin_download', tab='monitoring', monitor_view=selected_monitor_view, database=selected_database, current_ml_connection_only='1' if current_ml_connection_only else '0') }}"
+            >
+              Download CSV
+            </a>
+          </div>
+        </form>
       </div>
+      {% if selected_monitor_view == "heatwave-performance-query" %}
       <div class="table-wrap">
         <table class="admin-table definition-table report-table">
           <thead>
@@ -407,14 +479,7 @@
           </tbody>
         </table>
       </div>
-    </section>
-    {% elif active_tab == "hw-table-load-recovery" %}
-    <section class="panel">
-      <h3>HW Table Load Recovery</h3>
-      <p class="helper-text">HeatWave table load recovery details from <code>performance_schema.rpd_tables</code> and <code>performance_schema.rpd_table_id</code>.</p>
-      <div class="panel-actions">
-        <a class="button secondary" href="{{ url_for('db_admin_download', tab='hw-table-load-recovery', database=selected_database) }}">Download CSV</a>
-      </div>
+      {% elif selected_monitor_view == "hw-table-load-recovery" %}
       <div class="table-wrap">
         <table class="admin-table definition-table report-table">
           <thead>
@@ -448,32 +513,7 @@
           </tbody>
         </table>
       </div>
-    </section>
-    {% elif active_tab == "heatwave-ml-query" %}
-    <section class="panel">
-      <h3>HeatWave ML Query</h3>
-      <p class="helper-text">HeatWave ML query progress details from <code>performance_schema.rpd_query_stats</code>.</p>
-      <div class="panel-actions heatwave-ml-query-actions">
-        <form method="get" class="inline-form">
-          <input type="hidden" name="tab" value="heatwave-ml-query">
-          <label class="checkbox-field">
-            <input
-              type="checkbox"
-              name="current_ml_connection_only"
-              value="1"
-              {% if current_ml_connection_only %}checked{% endif %}
-            >
-            <span>Current ML running connection only</span>
-          </label>
-          <button class="button secondary" type="submit">Apply</button>
-        </form>
-        <a
-          class="button secondary"
-          href="{{ url_for('db_admin_download', tab='heatwave-ml-query', database=selected_database, current_ml_connection_only='1' if current_ml_connection_only else '0') }}"
-        >
-          Download CSV
-        </a>
-      </div>
+      {% else %}
       <div class="table-wrap">
         <table class="admin-table definition-table report-table">
           <thead>
@@ -544,6 +584,7 @@
           </table>
         </div>
       </section>
+      {% endif %}
       {% endif %}
     </section>
     {% endif %}
@@ -1048,6 +1089,34 @@
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && !modal.hidden) {
         closeModal();
+      }
+    });
+  })();
+
+  (() => {
+    const monitoringForm = document.getElementById("db-admin-monitoring-form");
+    const refreshSelect = document.getElementById("db-admin-monitor-refresh");
+    if (!monitoringForm || !refreshSelect) {
+      return;
+    }
+
+    let refreshTimer = null;
+    const refreshValue = refreshSelect.value;
+    const refreshSeconds = refreshValue === "none" ? 0 : Number(refreshValue || 0);
+
+    refreshSelect.addEventListener("change", () => {
+      monitoringForm.submit();
+    });
+
+    if (refreshSeconds > 0) {
+      refreshTimer = window.setTimeout(() => {
+        monitoringForm.submit();
+      }, refreshSeconds * 1000);
+    }
+
+    window.addEventListener("beforeunload", () => {
+      if (refreshTimer) {
+        window.clearTimeout(refreshTimer);
       }
     });
   })();
