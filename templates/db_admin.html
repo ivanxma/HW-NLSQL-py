@@ -453,8 +453,26 @@
     <section class="panel">
       <h3>HeatWave ML Query</h3>
       <p class="helper-text">HeatWave ML query progress details from <code>performance_schema.rpd_query_stats</code>.</p>
-      <div class="panel-actions">
-        <a class="button secondary" href="{{ url_for('db_admin_download', tab='heatwave-ml-query', database=selected_database) }}">Download CSV</a>
+      <div class="panel-actions heatwave-ml-query-actions">
+        <form method="get" class="inline-form">
+          <input type="hidden" name="tab" value="heatwave-ml-query">
+          <label class="checkbox-field">
+            <input
+              type="checkbox"
+              name="current_ml_connection_only"
+              value="1"
+              {% if current_ml_connection_only %}checked{% endif %}
+            >
+            <span>Current ML running connection only</span>
+          </label>
+          <button class="button secondary" type="submit">Apply</button>
+        </form>
+        <a
+          class="button secondary"
+          href="{{ url_for('db_admin_download', tab='heatwave-ml-query', database=selected_database, current_ml_connection_only='1' if current_ml_connection_only else '0') }}"
+        >
+          Download CSV
+        </a>
       </div>
       <div class="table-wrap">
         <table class="admin-table definition-table report-table">
@@ -489,6 +507,44 @@
           </tbody>
         </table>
       </div>
+      {% if current_ml_connection_only %}
+      <section class="panel modal-section">
+        <h4>Current Running ML Detail</h4>
+        <div class="table-wrap">
+          <table class="admin-table definition-table report-table">
+            <thead>
+              <tr>
+                {% for column in heatwave_ml_current_detail_stats.columns %}
+                <th>{{ column }}</th>
+                {% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in heatwave_ml_current_detail_stats.rows %}
+              <tr>
+                {% for value in row %}
+                <td>
+                  <button
+                    class="report-cell-button"
+                    type="button"
+                    data-report-value="{{ value if value is not none else '' }}"
+                    data-report-column="{{ heatwave_ml_current_detail_stats.columns[loop.index0] }}"
+                  >
+                    {{ value if value is not none else "-" }}
+                  </button>
+                </td>
+                {% endfor %}
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="{{ heatwave_ml_current_detail_stats.columns|length if heatwave_ml_current_detail_stats.columns else 1 }}">No current running ML detail row found.</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      {% endif %}
     </section>
     {% endif %}
   </section>

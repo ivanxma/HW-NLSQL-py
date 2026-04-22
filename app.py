@@ -78,6 +78,7 @@ NAV_GROUPS = [
             {"endpoint": "nlsql_page", "label": "NL_SQL"},
             {"endpoint": "vision_page", "label": "HWVision"},
             {"endpoint": "heatwave_ml_page", "label": "HeatWave ML"},
+            {"endpoint": "heatwave_lh_external_page", "label": "HeatWave LH/External Table"},
         ],
     },
 ]
@@ -1491,7 +1492,16 @@ def fetch_heatwave_performance_queries():
     )
 
 
-def fetch_heatwave_ml_queries():
+def fetch_heatwave_ml_queries(current_ml_connection_only=False):
+    current_connection_filter = ""
+    if current_ml_connection_only:
+        current_connection_filter = """
+          and connection_id = (
+              select id
+              from performance_schema.processlist
+              where info like 'SET rapid_ml_operation%'
+          )
+        """
     return run_sql_with_columns(
         """
         select
@@ -1512,7 +1522,45 @@ def fetch_heatwave_ml_queries():
             connection_id
         from performance_schema.rpd_query_stats
         where query_text like 'ML_%'
+        {current_connection_filter}
         order by startTime desc
+        """.format(current_connection_filter=current_connection_filter),
+        include_database=False,
+    )
+
+
+def fetch_heatwave_ml_current_running_detail():
+    return run_sql_with_columns(
+        """
+        select
+            QEXEC_TEXT->>"$.startTime" as startTime,
+            QEXEC_TEXT->>"$.status" as status,
+            QEXEC_TEXT->>"$.completionPercentage" as completionPercentage,
+            JSON_LENGTH(QEXEC_TEXT->>"$.progressItems") as progressItemsCount,
+            JSON_LENGTH(QEXEC_TEXT->>"$.completedSteps") as completedSteps,
+            JSON_EXTRACT(QEXEC_TEXT, concat("$.progressItems[", JSON_LENGTH(QEXEC_TEXT->>"$.completedSteps"), "]")) as progressItem,
+            JSON_EXTRACT(
+                JSON_EXTRACT(QEXEC_TEXT, concat("$.progressItems[", JSON_LENGTH(QEXEC_TEXT->>"$.completedSteps"), "]")),
+                "$.type"
+            ) as progressType,
+            QEXEC_TEXT
+        from performance_schema.rpd_query_stats
+        where connection_id = (
+            select id
+            from performance_schema.processlist
+            where info like 'SET rapid_ml_operation%'
+        )
+          and query_id = (
+            select max(query_id)
+            from performance_schema.rpd_query_stats
+            where connection_id = (
+                select id
+                from performance_schema.processlist
+                where info like 'SET rapid_ml_operation%'
+            )
+        )
+        order by startTime desc
+        limit 1
         """,
         include_database=False,
     )
@@ -1888,6 +1936,16 @@ def _derive_cluster_status(node_rows, status_column):
     return ", ".join(statuses) if statuses else "HeatWave metadata available"
 
 
+def _derive_heatwave_traffic_light(status_rows):
+    values = [str(row.get("value", "")).strip().upper() for row in status_rows]
+    healthy_values = {"ON", "ENABLED", "AVAILABLE", "IDLE", "ONLINE"}
+    if values and all(value in healthy_values for value in values):
+        return {"state": "loaded", "label": "GREEN"}
+    if values and all(value == "OFF" for value in values):
+        return {"state": "error", "label": "RED"}
+    return {"state": "partial", "label": "YELLOW"}
+
+
 def get_dashboard_server_info():
     profile = get_session_profile()
     info = {
@@ -1913,6 +1971,16 @@ def get_dashboard_server_info():
             "available": False,
             "status": "HeatWave metadata not detected",
             "node_count": 0,
+            "global_statuses": [
+                {"name": "rapid_cluster_status", "value": "-"},
+                {"name": "rapid_ml_status", "value": "-"},
+                {"name": "rapid_change_propagation_status", "value": "-"},
+                {"name": "rapid_net_encryption_status", "value": "-"},
+                {"name": "rapid_preload_stats_status", "value": "-"},
+                {"name": "rapid_resize_status", "value": "-"},
+                {"name": "rapid_service_status", "value": "-"},
+            ],
+            "traffic_light": {"state": "partial", "label": "YELLOW"},
             "fully_loaded_count": None,
             "partially_loaded_count": None,
             "nodes_table": {"columns": [], "rows": []},
@@ -2005,6 +2073,32 @@ def get_dashboard_server_info():
     summary["total_length_display"] = _format_bytes(summary["total_length"])
 
     heatwave = info["heatwave"]
+    rapid_status_rows = run_sql(
+        """
+        select variable_name, variable_value
+        from performance_schema.global_status
+        where lower(variable_name) like '%rapid%status%'
+        order by variable_name
+        """,
+        include_database=False,
+    )
+    if not rapid_status_rows:
+        rapid_status_rows = run_sql(
+            """
+            select variable_name, variable_value
+            from information_schema.global_status
+            where lower(variable_name) like '%rapid%status%'
+            order by variable_name
+            """,
+            include_database=False,
+        )
+    if rapid_status_rows:
+        heatwave["global_statuses"] = [
+            {"name": str(variable_name or "-"), "value": str(variable_value or "-")}
+            for variable_name, variable_value in rapid_status_rows
+        ]
+    heatwave["traffic_light"] = _derive_heatwave_traffic_light(heatwave["global_statuses"])
+
     has_rpd_nodes = _table_exists("performance_schema", "rpd_nodes")
     has_rpd_tables = _table_exists("performance_schema", "rpd_tables")
     has_rpd_table_id = _table_exists("performance_schema", "rpd_table_id")
@@ -2374,7 +2468,7 @@ def _build_csv_response(filename, columns, rows):
     )
 
 
-def _build_db_admin_download_payload(active_tab, selected_database):
+def _build_db_admin_download_payload(active_tab, selected_database, current_ml_connection_only=False):
     if active_tab == "db":
         inventory = fetch_database_inventory()
         return (
@@ -2407,7 +2501,7 @@ def _build_db_admin_download_payload(active_tab, selected_database):
         report = fetch_heatwave_performance_queries()
         return ("db-admin-heatwave-performance-query.csv", report["columns"], report["rows"])
     if active_tab == "heatwave-ml-query":
-        report = fetch_heatwave_ml_queries()
+        report = fetch_heatwave_ml_queries(current_ml_connection_only=current_ml_connection_only)
         return ("db-admin-heatwave-ml-query.csv", report["columns"], report["rows"])
     if active_tab == "hw-table-load-recovery":
         report = fetch_heatwave_table_load_recovery()
@@ -2536,6 +2630,7 @@ import pages.auth  # noqa: F401
 import pages.connection_profile  # noqa: F401
 import pages.db_admin  # noqa: F401
 import pages.heatwave_performance  # noqa: F401
+import pages.heatwave_lh_external  # noqa: F401
 import pages.heatwave_ml  # noqa: F401
 import pages.home  # noqa: F401
 import pages.import_page  # noqa: F401

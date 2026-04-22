@@ -23,6 +23,7 @@ from app_context import (
     drop_table,
     fetch_database_inventory,
     fetch_heatwave_ml_queries,
+    fetch_heatwave_ml_current_running_detail,
     fetch_heatwave_performance_queries,
     fetch_heatwave_table_load_recovery,
     fetch_heatwave_tables_report,
@@ -39,17 +40,33 @@ from app_context import (
 )
 
 
+def _parse_checkbox_value(raw_value):
+    return str(raw_value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 @app.route("/db-admin/download", methods=["GET"])
 @login_required
 def db_admin_download():
     active_tab = _normalize_db_admin_tab(request.args.get("tab", "db"))
     selected_database = str(request.args.get("database", "")).strip()
+    current_ml_connection_only = _parse_checkbox_value(request.args.get("current_ml_connection_only", ""))
     try:
-        filename, columns, rows = _build_db_admin_download_payload(active_tab, selected_database)
+        filename, columns, rows = _build_db_admin_download_payload(
+            active_tab,
+            selected_database,
+            current_ml_connection_only=current_ml_connection_only,
+        )
         return _build_csv_response(filename, columns, rows)
     except (ValueError, mysql.connector.Error) as error:
         flash(str(error), "error")
-        return redirect(url_for("db_admin_page", tab=active_tab, database=selected_database))
+        return redirect(
+            url_for(
+                "db_admin_page",
+                tab=active_tab,
+                database=selected_database,
+                current_ml_connection_only="1" if current_ml_connection_only else "0",
+            )
+        )
 
 
 @app.route("/db-admin", methods=["GET", "POST"])
@@ -61,6 +78,7 @@ def db_admin_page():
     requested_browse_table = str(request.args.get("browse_table", "")).strip()
     requested_browse_page = str(request.args.get("browse_page", "1")).strip()
     requested_edit_column = str(request.values.get("edit_column", "")).strip()
+    current_ml_connection_only = _parse_checkbox_value(request.values.get("current_ml_connection_only", ""))
     table_form = _default_table_form()
     add_column_form = _default_column_form()
     modify_column_form = None
@@ -252,6 +270,7 @@ def db_admin_page():
     heatwave_tables_stats = {"columns": [], "rows": [], "row_classes": [], "row_actions": []}
     heatwave_query_stats = {"columns": [], "rows": []}
     heatwave_ml_query_stats = {"columns": [], "rows": []}
+    heatwave_ml_current_detail_stats = {"columns": [], "rows": []}
     heatwave_table_load_recovery_stats = {"columns": [], "rows": []}
     if request.method == "GET":
         db_admin_modal_result = _pop_db_admin_modal_result()
@@ -268,7 +287,9 @@ def db_admin_page():
         elif active_tab == "heatwave-performance-query":
             heatwave_query_stats = fetch_heatwave_performance_queries()
         elif active_tab == "heatwave-ml-query":
-            heatwave_ml_query_stats = fetch_heatwave_ml_queries()
+            heatwave_ml_query_stats = fetch_heatwave_ml_queries(current_ml_connection_only=current_ml_connection_only)
+            if current_ml_connection_only:
+                heatwave_ml_current_detail_stats = fetch_heatwave_ml_current_running_detail()
         elif active_tab == "hw-table-load-recovery":
             heatwave_table_load_recovery_stats = fetch_heatwave_table_load_recovery()
         elif selected_database and _database_exists(selected_database):
@@ -313,6 +334,7 @@ def db_admin_page():
         heatwave_tables_stats = {"columns": [], "rows": [], "row_classes": [], "row_actions": []}
         heatwave_query_stats = {"columns": [], "rows": []}
         heatwave_ml_query_stats = {"columns": [], "rows": []}
+        heatwave_ml_current_detail_stats = {"columns": [], "rows": []}
         heatwave_table_load_recovery_stats = {"columns": [], "rows": []}
 
     return render_dashboard(
@@ -338,5 +360,7 @@ def db_admin_page():
         heatwave_tables_stats=heatwave_tables_stats,
         heatwave_query_stats=heatwave_query_stats,
         heatwave_ml_query_stats=heatwave_ml_query_stats,
+        heatwave_ml_current_detail_stats=heatwave_ml_current_detail_stats,
+        current_ml_connection_only=current_ml_connection_only,
         heatwave_table_load_recovery_stats=heatwave_table_load_recovery_stats,
     )

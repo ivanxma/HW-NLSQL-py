@@ -229,3 +229,17 @@ Profiles are stored in `profiles.json`. Only non-secret connection details are s
 - `Execute ML_PREDICT_TABLE` runs against `ml_data.iris_test`, refreshes the left panel with `iris_test`, and shows `ml_data.iris_predictions` on the right.
 - `Execute ML_SCORE` runs `CALL sys.ML_SCORE('ml_data.iris_validate', 'class', @iris_model, 'balanced_accuracy', @score, NULL);` and shows `@score` in form view.
 - `Execute ML_EXPLAIN_TABLE` runs `CALL sys.ML_EXPLAIN_TABLE('ml_data.iris_test', @iris_model, 'ml_data.iris_explanations', JSON_OBJECT('prediction_explainer', 'permutation_importance'));` and shows `iris_explanations` in form view.
+
+### HeatWave LH/External Table
+
+- The page includes `HeatWave_load` and `Incremental Refresh` tabs.
+- `Incremental Refresh` uses a two-panel layout with Lakehouse databases on the left and Lakehouse tables on the right.
+- Selecting a table enables `Definition` and `Refresh` actions for the current table only.
+- `Definition` opens a popup that shows `SHOW CREATE TABLE` and allows editing `AUTO_REFRESH_SOURCE`.
+- `Refresh` generates the incremental refresh SQL first, then `Execute` runs that SQL and shows the returned result sets below.
+
+### DB Admin
+
+- The `HeatWave ML Query` tab includes a `Current ML running connection only` filter.
+- When that filter is enabled, the main query appends `connection_id = (select id from performance_schema.processlist where info like 'SET rapid_ml_operation%')`.
+- When the filter is enabled, the page also shows a second detail table for the latest current-running ML query, including the full `QEXEC_TEXT`.
