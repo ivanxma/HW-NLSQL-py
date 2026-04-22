@@ -28,7 +28,7 @@
   </div>
 
   {% if active_tab == "find-relevant-docs" %}
-  <form method="post" class="split-layout">
+  <form method="post" class="panel-stack askme-vertical-layout">
     <input type="hidden" name="tab" value="{{ active_tab }}">
     <input type="hidden" name="askme_action" value="find_relevant_docs">
     <article class="panel">
@@ -122,7 +122,7 @@
     </article>
   </form>
   {% elif active_tab == "free-style-answer" %}
-  <form method="post" class="split-layout">
+  <form method="post" class="panel-stack askme-vertical-layout">
     <input type="hidden" name="tab" value="{{ active_tab }}">
     <input type="hidden" name="askme_action" value="free_style_answer">
     <article class="panel">
@@ -187,7 +187,7 @@
     </article>
   </form>
   {% elif active_tab == "answer-summary" %}
-  <form method="post" class="split-layout">
+  <form method="post" class="panel-stack askme-vertical-layout">
     <input type="hidden" name="tab" value="{{ active_tab }}">
     <input type="hidden" name="askme_action" value="answer_summary">
     <article class="panel">
@@ -252,7 +252,7 @@
     </article>
   </form>
   {% elif active_tab == "chatbot" %}
-  <div class="split-layout askme-chat-layout">
+  <div class="panel-stack askme-vertical-layout askme-chat-layout">
     <form method="post" class="panel askme-chat-controls">
       <input type="hidden" name="tab" value="{{ active_tab }}">
       <input type="hidden" name="askme_action" value="chatbot">
