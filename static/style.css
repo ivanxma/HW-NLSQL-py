@@ -273,6 +273,20 @@ button {
   align-items: start;
 }
 
+.askme-chat-layout {
+  align-items: start;
+}
+
+.askme-chat-controls {
+  position: sticky;
+  top: 20px;
+  align-self: start;
+}
+
+.askme-chat-messages .panel-header-row {
+  margin-bottom: 16px;
+}
+
 .import-tree {
   display: grid;
   gap: 12px;

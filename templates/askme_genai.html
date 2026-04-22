@@ -69,30 +69,55 @@
     </article>
 
     <article class="panel result-panel">
-      <h3>Matches</h3>
-      {% if answer_chunks_dataset.rows %}
-      <div class="table-wrap">
-        <table class="admin-table report-table">
-          <thead>
-            <tr>
-              {% for column in answer_chunks_dataset.columns %}
-              <th>{{ column }}</th>
-              {% endfor %}
-            </tr>
-          </thead>
-          <tbody>
-            {% for row in answer_chunks_dataset.rows %}
-            <tr>
-              {% for value in row %}
-              <td>{{ value if value is not none and value != '' else '-' }}</td>
-              {% endfor %}
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
+      <h3>Output</h3>
+      {% if answer_chunks_dataset.rows and citations_by_url %}
+      <div class="tab-strip result-tab-strip" role="tablist" aria-label="Find relevant docs output tabs">
+        <button class="tab-link result-tab-link active" type="button" data-result-group="askme-find-output" data-result-tab="matches" aria-selected="true">Matches</button>
+        <button class="tab-link result-tab-link" type="button" data-result-group="askme-find-output" data-result-tab="references" aria-selected="false">References</button>
       </div>
-      {% else %}
-      <p class="helper-text">Run the search to see the most relevant chunks from the selected vector tables.</p>
+      {% endif %}
+
+      <section class="result-tab-panel" data-result-group-panel="askme-find-output" data-result-panel="matches">
+        {% if answer_chunks_dataset.rows %}
+        <div class="table-wrap">
+          <table class="admin-table report-table">
+            <thead>
+              <tr>
+                {% for column in answer_chunks_dataset.columns %}
+                <th>{{ column }}</th>
+                {% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in answer_chunks_dataset.rows %}
+              <tr>
+                {% for value in row %}
+                <td>{{ value if value is not none and value != '' else '-' }}</td>
+                {% endfor %}
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="helper-text">Run the search to see the most relevant chunks from the selected vector tables.</p>
+        {% endif %}
+      </section>
+
+      {% if answer_chunks_dataset.rows and citations_by_url %}
+      <section class="result-tab-panel" data-result-group-panel="askme-find-output" data-result-panel="references" hidden>
+        <div class="panel-stack">
+          {% for item in citations_by_url %}
+          <section class="panel modal-section">
+            <p><strong>Document:</strong> {{ item.url or '-' }}</p>
+            {% for chunk in item.chunks %}
+            <p><strong>Similarity:</strong> {{ '%.4f'|format(chunk.similarity_score or 0) }}</p>
+            <div class="code-block">{{ chunk.content_chunk }}</div>
+            {% endfor %}
+          </section>
+          {% endfor %}
+        </div>
+      </section>
       {% endif %}
     </article>
   </form>
@@ -128,11 +153,36 @@
     </article>
 
     <article class="panel result-panel">
-      <h3>Answer</h3>
-      {% if answer_text %}
-      <div class="nl2ml-response-copy">{{ answer_text }}</div>
-      {% else %}
-      <p class="helper-text">Ask a question to generate an answer from the selected AskME vector tables.</p>
+      <h3>Output</h3>
+      {% if answer_text and citations_by_url %}
+      <div class="tab-strip result-tab-strip" role="tablist" aria-label="Free-style answer output tabs">
+        <button class="tab-link result-tab-link active" type="button" data-result-group="askme-answer-output" data-result-tab="answer" aria-selected="true">Answer</button>
+        <button class="tab-link result-tab-link" type="button" data-result-group="askme-answer-output" data-result-tab="references" aria-selected="false">References</button>
+      </div>
+      {% endif %}
+
+      <section class="result-tab-panel" data-result-group-panel="askme-answer-output" data-result-panel="answer">
+        {% if answer_text %}
+        <div class="nl2ml-response-copy">{{ answer_text }}</div>
+        {% else %}
+        <p class="helper-text">Ask a question to generate an answer from the selected AskME vector tables.</p>
+        {% endif %}
+      </section>
+
+      {% if answer_text and citations_by_url %}
+      <section class="result-tab-panel" data-result-group-panel="askme-answer-output" data-result-panel="references" hidden>
+        <div class="panel-stack">
+          {% for item in citations_by_url %}
+          <section class="panel modal-section">
+            <p><strong>Document:</strong> {{ item.url or '-' }}</p>
+            {% for chunk in item.chunks %}
+            <p><strong>Similarity:</strong> {{ '%.4f'|format(chunk.similarity_score or 0) }}</p>
+            <div class="code-block">{{ chunk.content_chunk }}</div>
+            {% endfor %}
+          </section>
+          {% endfor %}
+        </div>
+      </section>
       {% endif %}
     </article>
   </form>
@@ -168,35 +218,45 @@
     </article>
 
     <article class="panel result-panel">
-      <h3>Summary</h3>
-      {% if answer_text %}
-      <div class="nl2ml-response-copy">{{ answer_text }}</div>
-      {% else %}
-      <p class="helper-text">Generate a concise answer summary from the selected AskME vector tables.</p>
+      <h3>Output</h3>
+      {% if answer_text and citations_by_url %}
+      <div class="tab-strip result-tab-strip" role="tablist" aria-label="Answer summary output tabs">
+        <button class="tab-link result-tab-link active" type="button" data-result-group="askme-summary-output" data-result-tab="summary" aria-selected="true">Summary</button>
+        <button class="tab-link result-tab-link" type="button" data-result-group="askme-summary-output" data-result-tab="references" aria-selected="false">References</button>
+      </div>
+      {% endif %}
+
+      <section class="result-tab-panel" data-result-group-panel="askme-summary-output" data-result-panel="summary">
+        {% if answer_text %}
+        <div class="nl2ml-response-copy">{{ answer_text }}</div>
+        {% else %}
+        <p class="helper-text">Generate a concise answer summary from the selected AskME vector tables.</p>
+        {% endif %}
+      </section>
+
+      {% if answer_text and citations_by_url %}
+      <section class="result-tab-panel" data-result-group-panel="askme-summary-output" data-result-panel="references" hidden>
+        <div class="panel-stack">
+          {% for item in citations_by_url %}
+          <section class="panel modal-section">
+            <p><strong>Document:</strong> {{ item.url or '-' }}</p>
+            {% for chunk in item.chunks %}
+            <p><strong>Similarity:</strong> {{ '%.4f'|format(chunk.similarity_score or 0) }}</p>
+            <div class="code-block">{{ chunk.content_chunk }}</div>
+            {% endfor %}
+          </section>
+          {% endfor %}
+        </div>
+      </section>
       {% endif %}
     </article>
   </form>
   {% elif active_tab == "chatbot" %}
-  <div class="panel-stack">
-    <section class="panel">
-      <h3>Chatbot</h3>
-      {% if chat_history %}
-      <div class="panel-stack">
-        {% for item in chat_history %}
-        <section class="panel modal-section">
-          <p><strong>User:</strong> {{ item.user_message if item.user_message is defined else '-' }}</p>
-          <p><strong>Assistant:</strong> {{ item.chat_bot_message if item.chat_bot_message is defined else '-' }}</p>
-        </section>
-        {% endfor %}
-      </div>
-      {% else %}
-      <p class="helper-text">No chat history yet.</p>
-      {% endif %}
-    </section>
-
-    <form method="post" class="panel">
+  <div class="split-layout askme-chat-layout">
+    <form method="post" class="panel askme-chat-controls">
       <input type="hidden" name="tab" value="{{ active_tab }}">
       <input type="hidden" name="askme_action" value="chatbot">
+      <h3>Chatbot Controls</h3>
       <label>
         Vector Tables
         <select name="selected_tables" multiple size="8">
@@ -222,13 +282,69 @@
       </div>
     </form>
 
-    <form method="post" class="panel">
-      <input type="hidden" name="tab" value="{{ active_tab }}">
-      <input type="hidden" name="askme_action" value="clear_chat">
-      <div class="form-actions">
-        <button class="button secondary" type="submit">Clear Chat History</button>
+    <section class="panel askme-chat-messages">
+      <div class="panel-header-row">
+        <h3>Output</h3>
+        <form method="post" class="inline-form">
+          <input type="hidden" name="tab" value="{{ active_tab }}">
+          <input type="hidden" name="askme_action" value="clear_chat">
+          <button class="button secondary" type="submit">Clear Chat History</button>
+        </form>
       </div>
-    </form>
+      <div class="tab-strip result-tab-strip" role="tablist" aria-label="Askme chatbot output tabs">
+        <button
+          class="tab-link result-tab-link active"
+          type="button"
+          data-result-group="askme-chatbot-output"
+          data-result-tab="messages"
+          aria-selected="true"
+        >
+          Messages
+        </button>
+        <button
+          class="tab-link result-tab-link"
+          type="button"
+          data-result-group="askme-chatbot-output"
+          data-result-tab="references"
+          aria-selected="false"
+        >
+          References
+        </button>
+      </div>
+
+      <section class="result-tab-panel" data-result-group-panel="askme-chatbot-output" data-result-panel="messages">
+        {% if chat_history %}
+        <div class="panel-stack">
+          {% for item in chat_history %}
+          <section class="panel modal-section">
+            <p><strong>User:</strong> {{ item.user_message if item.user_message is defined else '-' }}</p>
+            <p><strong>Assistant:</strong> {{ item.chat_bot_message if item.chat_bot_message is defined else '-' }}</p>
+          </section>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="helper-text">No chat history yet.</p>
+        {% endif %}
+      </section>
+
+      <section class="result-tab-panel" data-result-group-panel="askme-chatbot-output" data-result-panel="references" hidden>
+        {% if citations_by_url %}
+        <div class="panel-stack">
+          {% for item in citations_by_url %}
+          <section class="panel modal-section">
+            <p><strong>Document:</strong> {{ item.url or '-' }}</p>
+            {% for chunk in item.chunks %}
+            <p><strong>Similarity:</strong> {{ '%.4f'|format(chunk.similarity_score or 0) }}</p>
+            <div class="code-block">{{ chunk.content_chunk }}</div>
+            {% endfor %}
+          </section>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="helper-text">No references available yet.</p>
+        {% endif %}
+      </section>
+    </section>
   </div>
   {% else %}
   <div class="panel-stack">
@@ -314,19 +430,31 @@
   </div>
   {% endif %}
 
-  {% if citations_by_url %}
-  <section class="panel">
-    <h3>References</h3>
-    {% for item in citations_by_url %}
-    <section class="panel modal-section">
-      <p><strong>Document:</strong> {{ item.url or '-' }}</p>
-      {% for chunk in item.chunks %}
-      <p><strong>Similarity:</strong> {{ '%.4f'|format(chunk.similarity_score or 0) }}</p>
-      <div class="code-block">{{ chunk.content_chunk }}</div>
-      {% endfor %}
-    </section>
-    {% endfor %}
-  </section>
-  {% endif %}
 </section>
+<script>
+  (() => {
+    const resultTabButtons = Array.from(document.querySelectorAll("[data-result-group][data-result-tab]"));
+    const resultTabPanels = Array.from(document.querySelectorAll("[data-result-group-panel][data-result-panel]"));
+    if (!resultTabButtons.length || !resultTabPanels.length) {
+      return;
+    }
+
+    const activateResultTab = (groupName, tabId) => {
+      resultTabButtons.forEach((button) => {
+        const isActive = button.dataset.resultGroup === groupName && button.dataset.resultTab === tabId;
+        button.classList.toggle("active", isActive);
+        button.setAttribute("aria-selected", isActive ? "true" : "false");
+      });
+      resultTabPanels.forEach((panel) => {
+        panel.hidden = !(panel.dataset.resultGroupPanel === groupName && panel.dataset.resultPanel === tabId);
+      });
+    };
+
+    resultTabButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        activateResultTab(button.dataset.resultGroup, button.dataset.resultTab);
+      });
+    });
+  })();
+</script>
 {% endblock %}

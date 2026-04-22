@@ -265,21 +265,7 @@ def _delete_object_storage_prefix(config_values, prefix):
 
 
 def _list_askme_vector_tables():
-    rows = run_sql(
-        """
-        select rti.table_name as table_name_value
-        from performance_schema.rpd_tables rt
-        join performance_schema.rpd_table_id rti
-          on rt.id = rti.id
-        where rti.schema_name = %s
-          and rti.table_name <> 'config'
-          and rt.load_status = 'AVAIL_RPDGSTABSTATE'
-        order by rti.table_name
-        """,
-        (ASKME_SCHEMA_NAME,),
-        include_database=False,
-    )
-    return [str(row[0]) for row in rows]
+    return _list_askme_tables()
 
 
 def _list_askme_tables():

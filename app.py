@@ -28,6 +28,9 @@ DEFAULT_PROFILE = {
     "port": 3306,
     "database": "performance_schema",
 }
+MYSQL_CONNECTION_TIMEOUT_SECONDS = 10
+MYSQL_READ_TIMEOUT_SECONDS = 30
+MYSQL_WRITE_TIMEOUT_SECONDS = 30
 SYSTEM_DATABASES = {"information_schema", "mysql", "performance_schema", "sys"}
 DASHBOARD_TABS = [
     {"id": "demo", "label": "Demo"},
@@ -269,6 +272,9 @@ def get_connection_config(user=None, password=None, include_database=True):
     config = {
         "host": profile["host"],
         "port": profile["port"],
+        "connection_timeout": MYSQL_CONNECTION_TIMEOUT_SECONDS,
+        "read_timeout": MYSQL_READ_TIMEOUT_SECONDS,
+        "write_timeout": MYSQL_WRITE_TIMEOUT_SECONDS,
     }
     if include_database and profile["database"]:
         config["database"] = profile["database"]
