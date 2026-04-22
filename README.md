@@ -7,6 +7,7 @@ This application now uses Flask instead of Streamlit while preserving the same c
 - run HeatWave `sys.NL_SQL`
 - run HeatWave visual prompts with `sys.ML_GENERATE`
 - build and query a HeatWave GenAI knowledge base from URL content
+- configure and run an AskME-style GenAI knowledge base backed by `askme.config`
 - run HeatWave AutoML demo actions on the Iris dataset
 - compare InnoDB and RAPID execution on `airportdb`
 
@@ -183,7 +184,6 @@ allow dynamic-group hw-genai-dg to read objectstorage-namespaces in tenancy
 allow dynamic-group hw-genai-dg to read buckets in compartment hw-demo-compartment
 allow dynamic-group hw-genai-dg to manage objects in compartment hw-demo-compartment
 allow dynamic-group hw-genai-dg to manage object-family in compartment hw-demo-compartment
-allow dynamic-group hw-genai-dg to read secret-bundles in compartment hw-demo-compartment
 allow dynamic-group hw-genai-dg to use generative-ai-chat in compartment hw-demo-compartment
 allow dynamic-group hw-genai-dg to use generative-ai-text-generation in compartment hw-demo-compartment
 allow dynamic-group hw-genai-dg to use generative-ai-text-summarization in compartment hw-demo-compartment
@@ -197,7 +197,10 @@ If you use different OCI names, replace `hw-genai-dg` and `hw-demo-compartment` 
 2. Create or select a saved connection profile on the login page.
 3. Log in with the database user and password for that profile.
 4. Open `Admin > Setup configdb` and choose the schemas NL_SQL should use.
-5. Use `HeatWave > NL_SQL`, `HeatWave > HWVision`, `HeatWave > GenAI`, `HeatWave > HeatWave ML`, or `HeatWave > HeatWave Performance`.
+5. Open `Admin > Setup Askme` to create database `askme`, initialize table `askme.config`, and save `OCI_REGION`, `OCI_BUCKET_NAME`, `OCI_NAMESPACE`, and `OCI_BUCKET_FOLDER` for AskME object-storage usage.
+6. Use `HeatWave > NL_SQL`, `HeatWave > HWVision`, `HeatWave > GenAI`, `HeatWave > Askme GenAI`, `HeatWave > HeatWave ML`, or `HeatWave > HeatWave Performance`.
+
+`HeatWave > Askme GenAI` is shown only after all required `askme.config` values are configured. AskME database access uses the current logged-in MySQL connection; it does not use OCI Vault to look up database credentials.
 
 Profiles are stored in `profiles.json`. Only non-secret connection details are stored there.
 
@@ -217,6 +220,16 @@ Profiles are stored in `profiles.json`. Only non-secret connection details are s
 - The result panel shows the source URL, chunk count, inserted row count, a stored-sources summary, and a chunk preview table.
 - `Search KB` embeds the question, finds the nearest stored chunks, and passes the matched text into HeatWave text generation to produce the answer.
 - Search stays disabled until the selected schema contains the configured vector table.
+
+### Askme GenAI
+
+- `Admin > Setup Askme` creates database `askme` if needed and creates table `askme.config (my_row_id, env_var, env_value, primary key(my_row_id))`.
+- The AskME setup page stores OCI object-storage settings in `askme.config`: `OCI_REGION`, `OCI_BUCKET_NAME`, `OCI_NAMESPACE`, and `OCI_BUCKET_FOLDER`.
+- The AskME page uses the current logged-in MySQL connection for all database operations.
+- `HeatWave > Askme GenAI` is enabled only after the AskME setup values are populated.
+- The page includes `Find Relevant Docs`, `Free-style Answer`, `Answer Summary`, `Chatbot`, and `Knowledge Base Management` tabs.
+- `Knowledge Base Management` uploads selected files into the configured OCI bucket folder and builds the vector table from explicit `oci://bucket@namespace/object_path` file references.
+- The `Chatbot` tab keeps the controls grouped on the left and shows tabbed output on the right for `Messages` and `References`.
 
 ### HeatWave Performance
 
