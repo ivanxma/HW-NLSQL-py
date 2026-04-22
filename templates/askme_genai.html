@@ -382,7 +382,7 @@
     </section>
     {% endif %}
 
-    <form method="post" enctype="multipart/form-data" class="panel">
+    <form method="post" enctype="multipart/form-data" class="panel" id="askme-kb-create-form">
       <input type="hidden" name="tab" value="{{ active_tab }}">
       <input type="hidden" name="askme_action" value="kb_create">
       <h3>Create Vector Table</h3>
@@ -395,10 +395,63 @@
         <input type="file" name="files" multiple>
       </label>
       <p class="helper-text">Object storage target: <code>{{ config_values.OCI_BUCKET_NAME or '-' }}</code> / <code>{{ config_values.OCI_NAMESPACE or '-' }}</code> / <code>{{ config_values.OCI_BUCKET_FOLDER or '-' }}</code></p>
+      <p class="helper-text" id="askme-kb-create-status" hidden></p>
       <div class="form-actions">
         <button class="button primary" type="submit" {% if not config_status.is_ready %}disabled{% endif %}>Upload and Create</button>
       </div>
     </form>
+
+    {% if create_result_tabs %}
+    <section class="panel result-panel">
+      <h3>Create Vector Table Output</h3>
+      <div class="tab-strip result-tab-strip" role="tablist" aria-label="AskME create vector table output tabs">
+        {% for tab in create_result_tabs %}
+        <button
+          class="tab-link result-tab-link {% if loop.first %}active{% endif %}"
+          type="button"
+          data-result-group="askme-create-output"
+          data-result-tab="{{ tab.id }}"
+          aria-selected="{% if loop.first %}true{% else %}false{% endif %}"
+        >
+          {{ tab.label }}
+        </button>
+        {% endfor %}
+      </div>
+
+      {% for tab in create_result_tabs %}
+      <section class="result-tab-panel" data-result-group-panel="askme-create-output" data-result-panel="{{ tab.id }}" {% if not loop.first %}hidden{% endif %}>
+        {% if tab.dataset.columns %}
+        <div class="table-wrap">
+          <table class="admin-table report-table">
+            <thead>
+              <tr>
+                {% for column in tab.dataset.columns %}
+                <th>{{ column }}</th>
+                {% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in tab.dataset.rows %}
+              <tr>
+                {% for value in row %}
+                <td>{{ value if value is not none and value != '' else "-" }}</td>
+                {% endfor %}
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="{{ tab.dataset.columns|length if tab.dataset.columns else 1 }}">No rows returned.</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="helper-text">This result set returned no columns.</p>
+        {% endif %}
+      </section>
+      {% endfor %}
+    </section>
+    {% endif %}
 
     <form method="post" class="panel">
       <input type="hidden" name="tab" value="{{ active_tab }}">
@@ -455,6 +508,26 @@
         activateResultTab(button.dataset.resultGroup, button.dataset.resultTab);
       });
     });
+
+    const kbCreateForm = document.getElementById("askme-kb-create-form");
+    const kbCreateStatus = document.getElementById("askme-kb-create-status");
+    if (kbCreateForm && kbCreateStatus) {
+      kbCreateForm.addEventListener("submit", (event) => {
+        const submitter = event.submitter;
+        if (!submitter) {
+          return;
+        }
+        submitter.disabled = true;
+        kbCreateStatus.hidden = false;
+        kbCreateStatus.textContent = "Status: Uploading files to Object Storage...";
+        window.setTimeout(() => {
+          kbCreateStatus.textContent = "Status: Upload completed or in progress. HeatWave is creating the vector table...";
+        }, 2500);
+        window.setTimeout(() => {
+          kbCreateStatus.textContent = "Status: Still running. Large documents can take several minutes. If the request fails, the server error will be shown on this page.";
+        }, 12000);
+      });
+    }
   })();
 </script>
 {% endblock %}

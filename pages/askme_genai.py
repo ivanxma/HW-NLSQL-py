@@ -42,6 +42,9 @@ ASKME_EMBED_MODEL_ID = "multilingual-e5-small"
 ASKME_FIND_TOPK = 20
 ASKME_ANSWER_TOPK = 3
 ASKME_SUMMARY_TOPK = 5
+ASKME_UPLOAD_CONNECTION_TIMEOUT_SECONDS = 30
+ASKME_UPLOAD_READ_TIMEOUT_SECONDS = 1800
+ASKME_UPLOAD_WRITE_TIMEOUT_SECONDS = 1800
 ASKME_SUMMARY_PROMPT = """
 You are a data summarizer. I will provide a question and relevant context data.
 Summarize the parts of the context that best answer the question.
@@ -98,6 +101,38 @@ def _consume_cursor_results(cursor):
         if not cursor.nextset():
             break
     return first_value
+
+
+def _collect_cursor_results(cursor, title_prefix="Result Set"):
+    datasets = []
+    result_index = 1
+    while True:
+        if cursor.with_rows:
+            datasets.append(
+                {
+                    "title": "{} {}".format(title_prefix, result_index),
+                    "columns": list(cursor.column_names or ()),
+                    "rows": [
+                        [_normalize_modal_cell(value) for value in row]
+                        for row in cursor.fetchall()
+                    ],
+                }
+            )
+        else:
+            statement_text = _normalize_text(getattr(cursor, "statement", ""))
+            rowcount_value = _normalize_modal_cell(getattr(cursor, "rowcount", ""))
+            if statement_text or rowcount_value not in ("", None, -1):
+                datasets.append(
+                    {
+                        "title": "Status {}".format(result_index),
+                        "columns": ["statement", "rowcount"],
+                        "rows": [[statement_text, rowcount_value]],
+                    }
+                )
+        result_index += 1
+        if not cursor.nextset():
+            break
+    return datasets
 
 
 def _safe_json_loads(value, default_value):
@@ -193,6 +228,7 @@ def _get_object_storage_client(config_values):
             config={"region": _normalize_text(config_values.get("OCI_REGION"))},
             signer=signer,
             retry_strategy=oci.retry.NoneRetryStrategy(),
+            timeout=(30, 600),
         )
     except Exception as error:
         raise RuntimeError(
@@ -320,6 +356,14 @@ def _build_table_dataset(table_names):
         "columns": ["table_name"],
         "rows": [[name] for name in table_names],
     }
+
+
+def _askme_upload_connection_config():
+    config = dict(get_connection_config(include_database=False))
+    config["connection_timeout"] = ASKME_UPLOAD_CONNECTION_TIMEOUT_SECONDS
+    config["read_timeout"] = ASKME_UPLOAD_READ_TIMEOUT_SECONDS
+    config["write_timeout"] = ASKME_UPLOAD_WRITE_TIMEOUT_SECONDS
+    return config
 
 
 def _search_similar_chunks(question, table_names, *, topk, min_similarity_score):
@@ -524,7 +568,7 @@ def _create_vector_store(table_name, files, config_values):
     cnx = None
     cursor = None
     try:
-        cnx = mysql_connection(get_connection_config(include_database=False))
+        cnx = mysql_connection(_askme_upload_connection_config())
         cursor = cnx.cursor()
         bucket_name = _normalize_text(config_values.get("OCI_BUCKET_NAME"))
         namespace_name = _normalize_text(config_values.get("OCI_NAMESPACE"))
@@ -562,17 +606,41 @@ def _create_vector_store(table_name, files, config_values):
         cursor.execute("SET @options = %s", (options_json,))
         _consume_cursor_results(cursor)
         cursor.execute("CALL sys.heatwave_load(@input_list, @options)")
-        _consume_cursor_results(cursor)
+        procedure_datasets = _collect_cursor_results(cursor, title_prefix="HeatWave Load Result")
         cnx.commit()
-        return {"table_name": normalized_table, "prefix": prefix, "uploaded_count": uploaded_count}
-    except Exception:
+        return {
+            "table_name": normalized_table,
+            "prefix": prefix,
+            "uploaded_count": uploaded_count,
+            "procedure_datasets": procedure_datasets,
+        }
+    except mysql.connector.Error as error:
         try:
             _delete_object_storage_prefix(config_values, prefix)
         except Exception:
             pass
-        if cnx:
-            cnx.rollback()
-        raise
+        if cnx and cnx.is_connected():
+            try:
+                cnx.rollback()
+            except mysql.connector.Error:
+                pass
+        if getattr(error, "errno", None) in {2006, 2013}:
+            raise RuntimeError(
+                "The MySQL connection was lost while HeatWave was building the vector table. "
+                "The upload may still be processing on the server. Check the AskME table list or retry after a short wait."
+            ) from error
+        raise RuntimeError("Vector table creation failed: {}".format(error)) from error
+    except Exception as error:
+        try:
+            _delete_object_storage_prefix(config_values, prefix)
+        except Exception:
+            pass
+        if cnx and cnx.is_connected():
+            try:
+                cnx.rollback()
+            except mysql.connector.Error:
+                pass
+        raise RuntimeError("Vector table creation failed: {}".format(error)) from error
     finally:
         if cursor:
             cursor.close()
@@ -629,6 +697,7 @@ def askme_genai_page():
     management_message = ""
     management_status = ""
     create_result = {}
+    create_result_tabs = []
 
     try:
         setup_askme_db()
@@ -716,6 +785,14 @@ def askme_genai_page():
                 if not files:
                     raise ValueError("Choose one or more files to upload.")
                 create_result = _create_vector_store(table_name, files, config_values)
+                create_result_tabs = [
+                    {
+                        "id": "create-result-{}".format(index + 1),
+                        "label": dataset.get("title") or "Result {}".format(index + 1),
+                        "dataset": dataset,
+                    }
+                    for index, dataset in enumerate(create_result.get("procedure_datasets") or [])
+                ]
                 available_tables = _list_askme_vector_tables()
                 managed_tables = _list_askme_tables()
                 selected_tables = _filter_selected_tables(
@@ -804,5 +881,6 @@ def askme_genai_page():
         management_message=management_message,
         management_status=management_status,
         create_result=create_result,
+        create_result_tabs=create_result_tabs,
         config_values=config_values,
     )
