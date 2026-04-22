@@ -6,6 +6,7 @@ This application now uses Flask instead of Streamlit while preserving the same c
 - maintain `nlsql.configdb`
 - run HeatWave `sys.NL_SQL`
 - run HeatWave visual prompts with `sys.ML_GENERATE`
+- run HeatWave AutoML demo actions on the Iris dataset
 - compare InnoDB and RAPID execution on `airportdb`
 
 ## Install
@@ -195,7 +196,7 @@ If you use different OCI names, replace `hw-genai-dg` and `hw-demo-compartment` 
 2. Create or select a saved connection profile on the login page.
 3. Log in with the database user and password for that profile.
 4. Open `Admin > Setup configdb` and choose the schemas NL_SQL should use.
-5. Use `HeatWave > NL_SQL`, `HeatWave > HWVision`, or `HeatWave > HeatWave Performance`.
+5. Use `HeatWave > NL_SQL`, `HeatWave > HWVision`, `HeatWave > HeatWave ML`, or `HeatWave > HeatWave Performance`.
 
 Profiles are stored in `profiles.json`. Only non-secret connection details are stored there.
 
@@ -216,3 +217,15 @@ Profiles are stored in `profiles.json`. Only non-secret connection details are s
 - The page forces the session to `autocommit=1` for this workload and displays the current session autocommit value.
 - The page shows row counts for `airportdb.booking`, `airportdb.flight`, `airportdb.airline`, and `airportdb.airport_geo`.
 - The `EXPLAIN` output is produced only after `Execute` is clicked and JSON plan values are formatted for readability.
+
+### HeatWave ML
+
+- The page includes an `Iris` tab that initializes `ml_data.iris_train`, `ml_data.iris_test`, and `ml_data.iris_validate`.
+- `Initialize IrisDB` recreates schema `ml_data` and clears `ML_SCHEMA_<user>.MODEL_CATALOG` for `iris_model` before loading the demo tables.
+- Action buttons show the SQL or procedure syntax in the info row before the request is submitted, then append timing after the request finishes.
+- `Execute ML_TRAIN` runs `CALL sys.ML_TRAIN('ml_data.iris_train', 'class', JSON_OBJECT('task', 'classification', 'exclude_column_list', JSON_ARRAY('my_row_id')), @model);`.
+- `Execute ML_MODEL_LOAD` runs `CALL sys.ML_MODEL_LOAD("iris_model", NULL);`.
+- `Execute ML_PREDICT_ROW` uses a fixed sample row and shows the prediction output in form view on the right panel.
+- `Execute ML_PREDICT_TABLE` runs against `ml_data.iris_test`, refreshes the left panel with `iris_test`, and shows `ml_data.iris_predictions` on the right.
+- `Execute ML_SCORE` runs `CALL sys.ML_SCORE('ml_data.iris_validate', 'class', @iris_model, 'balanced_accuracy', @score, NULL);` and shows `@score` in form view.
+- `Execute ML_EXPLAIN_TABLE` runs `CALL sys.ML_EXPLAIN_TABLE('ml_data.iris_test', @iris_model, 'ml_data.iris_explanations', JSON_OBJECT('prediction_explainer', 'permutation_importance'));` and shows `iris_explanations` in form view.

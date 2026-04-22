@@ -942,6 +942,12 @@ th {
   display: inline-flex;
 }
 
+.heatwave-ml-info-row {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
 .performance-panels {
   align-items: start;
 }

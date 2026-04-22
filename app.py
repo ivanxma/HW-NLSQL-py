@@ -77,6 +77,7 @@ NAV_GROUPS = [
         "items": [
             {"endpoint": "nlsql_page", "label": "NL_SQL"},
             {"endpoint": "vision_page", "label": "HWVision"},
+            {"endpoint": "heatwave_ml_page", "label": "HeatWave ML"},
         ],
     },
 ]
@@ -2535,6 +2536,7 @@ import pages.auth  # noqa: F401
 import pages.connection_profile  # noqa: F401
 import pages.db_admin  # noqa: F401
 import pages.heatwave_performance  # noqa: F401
+import pages.heatwave_ml  # noqa: F401
 import pages.home  # noqa: F401
 import pages.import_page  # noqa: F401
 import pages.nlsql  # noqa: F401
