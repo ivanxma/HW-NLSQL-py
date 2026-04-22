@@ -6,6 +6,7 @@ This application now uses Flask instead of Streamlit while preserving the same c
 - maintain `nlsql.configdb`
 - run HeatWave `sys.NL_SQL`
 - run HeatWave visual prompts with `sys.ML_GENERATE`
+- build and query a HeatWave GenAI knowledge base from URL content
 - run HeatWave AutoML demo actions on the Iris dataset
 - compare InnoDB and RAPID execution on `airportdb`
 
@@ -196,7 +197,7 @@ If you use different OCI names, replace `hw-genai-dg` and `hw-demo-compartment` 
 2. Create or select a saved connection profile on the login page.
 3. Log in with the database user and password for that profile.
 4. Open `Admin > Setup configdb` and choose the schemas NL_SQL should use.
-5. Use `HeatWave > NL_SQL`, `HeatWave > HWVision`, `HeatWave > HeatWave ML`, or `HeatWave > HeatWave Performance`.
+5. Use `HeatWave > NL_SQL`, `HeatWave > HWVision`, `HeatWave > GenAI`, `HeatWave > HeatWave ML`, or `HeatWave > HeatWave Performance`.
 
 Profiles are stored in `profiles.json`. Only non-secret connection details are stored there.
 
@@ -207,6 +208,15 @@ Profiles are stored in `profiles.json`. Only non-secret connection details are s
 - The `Submit` button is disabled while a request is running.
 - The pointer changes to a wait cursor until the response returns.
 - The page shows the full `CALL sys.NL_SQL(...)` syntax for the submitted request, followed by the generated SQL and result sets.
+
+### GenAI
+
+- The page includes `Create KB` and `Search KB` tabs.
+- `Create KB` fetches text from a source URL, chunks the content, generates embeddings, and stores the rows in a vector table.
+- `Create KB` can either reuse an existing schema or create a new database before loading the vector rows.
+- The result panel shows the source URL, chunk count, inserted row count, a stored-sources summary, and a chunk preview table.
+- `Search KB` embeds the question, finds the nearest stored chunks, and passes the matched text into HeatWave text generation to produce the answer.
+- Search stays disabled until the selected schema contains the configured vector table.
 
 ### HeatWave Performance
 
