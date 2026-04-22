@@ -30,23 +30,32 @@
         <p class="eyebrow">Demo</p>
         <h3>What this demo covers</h3>
         <p class="hero-copy">
-          The application is a compact HeatWave showcase for connection management, NL-to-SQL generation,
-          and multimodal prompts against your MySQL environment.
+          This demo walks through the main HeatWave capabilities in one application: natural-language SQL,
+          AutoML operations, Lakehouse external tables, and GenAI vector-search workflows against your
+          connected MySQL environment.
         </p>
       </section>
 
       <section class="info-grid dashboard-metrics">
         <article class="info-card">
-          <h3>Connection Flow</h3>
-          <p>Use a saved connection profile, log in with database credentials, and keep the active server context across the app.</p>
+          <h3>HeatWave NL_SQL</h3>
+          <p>Ask business questions in natural language, review the generated SQL, inspect the referenced tables, and compare the SQL with the returned result sets.</p>
         </article>
         <article class="info-card">
-          <h3>NL_SQL</h3>
-          <p>Run natural-language prompts against the schemas enabled in <code>nlsql.configdb</code> and inspect the generated SQL.</p>
+          <h3>HeatWave ML</h3>
+          <p>Initialize demo datasets such as Iris, run HeatWave AutoML operations like <code>ML_TRAIN</code>, and monitor model-related activity and progress from the UI.</p>
         </article>
         <article class="info-card">
-          <h3>Vision</h3>
-          <p>Upload an image, choose a supported model, and ask HeatWave GenAI questions about the image content.</p>
+          <h3>External Table with Lakehouse</h3>
+          <p>Browse Lakehouse databases and tables, inspect table definitions, manage refresh behavior, and work with external data without loading it into native InnoDB tables first.</p>
+        </article>
+        <article class="info-card">
+          <h3>Performance with airportdb</h3>
+          <p>Review HeatWave performance views and sample query behavior using the <code>airportdb</code> demo schema when it is available on the connected server.</p>
+        </article>
+        <article class="info-card">
+          <h3>GenAI / VectorStore</h3>
+          <p>Create a knowledge base from URL content, embed and store vectors with HeatWave, then search the vector table and generate answers from the matched documents.</p>
         </article>
       </section>
 
@@ -75,7 +84,10 @@
             <li>Confirm the active connection profile and credentials.</li>
             <li>Use <code>Setup configdb</code> to select the schemas exposed to NL_SQL.</li>
             <li>Run questions in <code>NL_SQL</code> and compare the generated SQL to the returned result sets.</li>
-            <li>Use <code>HWVision</code> for an image-based GenAI example against the same server.</li>
+            <li>Open <code>HeatWave ML</code> to initialize sample data and run AutoML operations.</li>
+            <li>Review <code>HeatWave Performance</code> against <code>airportdb</code> when that demo schema is installed.</li>
+            <li>Use <code>HeatWave External Table with Lakehouse</code> to review external-table metadata and refresh behavior.</li>
+            <li>Open <code>HeatWave GenAI</code> to build a vector knowledge base and search it with HeatWave generation models.</li>
           </ol>
         </article>
       </section>

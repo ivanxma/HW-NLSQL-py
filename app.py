@@ -80,6 +80,7 @@ NAV_GROUPS = [
         "items": [
             {"endpoint": "nlsql_page", "label": "NL_SQL"},
             {"endpoint": "vision_page", "label": "HWVision"},
+            {"endpoint": "heatwave_genai_page", "label": "GenAI"},
             {"endpoint": "heatwave_ml_page", "label": "HeatWave ML"},
             {"endpoint": "heatwave_lh_external_page", "label": "HeatWave LH/External Table"},
         ],
@@ -342,6 +343,7 @@ def run_sql_with_columns(sql_text, params=None, *, include_database=True, autoco
 
 def run_sql_multi_resultsets(sql_text, params=None, *, include_database=True, autocommit=False):
     cnx = None
+    cursor = None
     try:
         if params:
             raise ValueError("Parameterized multi-result SQL is not supported.")
@@ -349,26 +351,36 @@ def run_sql_multi_resultsets(sql_text, params=None, *, include_database=True, au
             get_connection_config(include_database=include_database),
             autocommit=autocommit,
         )
+        cursor = cnx.cursor()
         datasets = []
-        for result_index, result in enumerate(cnx.cmd_query_iter(sql_text), start=1):
-            if "columns" in result:
-                rows, _ = cnx.get_rows()
+        cursor.execute(sql_text, map_results=True)
+        result_index = 1
+        while True:
+            if cursor.with_rows:
                 datasets.append(
                     {
                         "title": "Result Set {}".format(result_index),
-                        "columns": [str(column[0]) for column in result.get("columns", [])],
-                        "rows": [[_normalize_modal_cell(value) for value in row] for row in rows],
+                        "columns": list(cursor.column_names or ()),
+                        "rows": [
+                            [_normalize_modal_cell(value) for value in row]
+                            for row in cursor.fetchall()
+                        ],
                     }
                 )
             else:
                 datasets.append(
                     {
                         "title": "Status {}".format(result_index),
-                        "columns": [str(key) for key in result.keys()],
-                        "rows": [[_normalize_modal_cell(value) for value in result.values()]],
+                        "columns": ["statement", "rowcount"],
+                        "rows": [[
+                            _normalize_modal_cell(getattr(cursor, "statement", "")),
+                            _normalize_modal_cell(cursor.rowcount),
+                        ]],
                     }
                 )
-        cnx.consume_results()
+            result_index += 1
+            if not cursor.nextset():
+                break
         cnx.commit()
         return datasets
     except (mysql.connector.Error, ValueError):
@@ -376,6 +388,8 @@ def run_sql_multi_resultsets(sql_text, params=None, *, include_database=True, au
             cnx.rollback()
         raise
     finally:
+        if cursor:
+            cursor.close()
         if cnx and cnx.is_connected():
             try:
                 cnx.consume_results()
@@ -2639,6 +2653,7 @@ def execute_heatwave_performance_query(sql_text):
 import pages.auth  # noqa: F401
 import pages.connection_profile  # noqa: F401
 import pages.db_admin  # noqa: F401
+import pages.heatwave_genai  # noqa: F401
 import pages.heatwave_performance  # noqa: F401
 import pages.heatwave_lh_external  # noqa: F401
 import pages.heatwave_ml  # noqa: F401
