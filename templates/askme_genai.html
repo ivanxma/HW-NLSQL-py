@@ -315,7 +315,7 @@
       <section class="result-tab-panel" data-result-group-panel="askme-chatbot-output" data-result-panel="messages">
         {% if chat_history %}
         <div class="panel-stack">
-          {% for item in chat_history %}
+          {% for item in chat_history|reverse %}
           <section class="panel modal-section">
             <p><strong>User:</strong> {{ item.user_message if item.user_message is defined else '-' }}</p>
             <p><strong>Assistant:</strong> {{ item.chat_bot_message if item.chat_bot_message is defined else '-' }}</p>
