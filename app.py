@@ -61,6 +61,13 @@ MYSQL_TYPE_OPTIONS = [
 MYSQL_TYPE_OPTION_MAP = {row["name"]: row for row in MYSQL_TYPE_OPTIONS}
 IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_$]+$")
 MYSQL_DATA_TYPE_RE = re.compile(r"^[A-Z]+(?:\s+[A-Z]+)?(?:\(\s*\d+(?:\s*,\s*\d+)?\s*\))?$")
+ASKME_SCHEMA_NAME = "askme"
+ASKME_CONFIG_ROWS = [
+    ("OCI_REGION", ""),
+    ("OCI_BUCKET_NAME", ""),
+    ("OCI_NAMESPACE", ""),
+    ("OCI_BUCKET_FOLDER", "askme_user_data/user_documents-"),
+]
 NAV_GROUPS = [
     {
         "label": "Home",
@@ -73,6 +80,7 @@ NAV_GROUPS = [
             {"endpoint": "db_admin_page", "label": "DB Admin"},
             {"endpoint": "import_page", "label": "Import"},
             {"endpoint": "setup_configdb_page", "label": "Setup configdb"},
+            {"endpoint": "setup_askme_page", "label": "Setup Askme"},
         ],
     },
     {
@@ -81,6 +89,7 @@ NAV_GROUPS = [
             {"endpoint": "nlsql_page", "label": "NL_SQL"},
             {"endpoint": "vision_page", "label": "HWVision"},
             {"endpoint": "heatwave_genai_page", "label": "GenAI"},
+            {"endpoint": "askme_genai_page", "label": "Askme GenAI"},
             {"endpoint": "heatwave_ml_page", "label": "HeatWave ML"},
             {"endpoint": "heatwave_lh_external_page", "label": "HeatWave LH/External Table"},
         ],
@@ -543,6 +552,128 @@ def save_configdb_databases(database_names):
                 """,
                 [(name,) for name in sorted(set(database_names))],
             )
+        cnx.commit()
+    except mysql.connector.Error:
+        if cnx:
+            cnx.rollback()
+        raise
+    finally:
+        if cursor:
+            cursor.close()
+        if cnx and cnx.is_connected():
+            cnx.close()
+
+
+def setup_askme_db():
+    exec_sql(
+        "create database if not exists {}".format(_quote_identifier(ASKME_SCHEMA_NAME)),
+        include_database=False,
+    )
+    exec_sql(
+        """
+        create table if not exists askme.config (
+            my_row_id bigint unsigned not null auto_increment,
+            env_var varchar(128) not null,
+            env_value text null,
+            primary key (my_row_id)
+        )
+        """,
+        include_database=False,
+    )
+    existing_columns = run_sql(
+        """
+        select column_name as column_name_value
+        from information_schema.columns
+        where table_schema = 'askme'
+          and table_name = 'config'
+        order by ordinal_position
+        """,
+        include_database=False,
+    )
+    column_names = [str(row[0]).lower() for row in existing_columns]
+    if "my_row_id" not in column_names:
+        exec_sql(
+            """
+            alter table askme.config
+                add column my_row_id bigint unsigned not null auto_increment first,
+                drop primary key,
+                add primary key (my_row_id)
+            """,
+            include_database=False,
+        )
+    existing_indexes = run_sql(
+        """
+        select index_name as index_name_value
+        from information_schema.statistics
+        where table_schema = 'askme'
+          and table_name = 'config'
+        """,
+        include_database=False,
+    )
+    index_names = {str(row[0]).lower() for row in existing_indexes}
+    if "uk_askme_config_env_var" in index_names:
+        exec_sql(
+            "alter table askme.config drop index uk_askme_config_env_var",
+            include_database=False,
+        )
+    for env_var, default_value in ASKME_CONFIG_ROWS:
+        exec_sql(
+            """
+            insert into askme.config (env_var, env_value)
+            select %s, %s
+            from dual
+            where not exists (
+                select 1
+                from askme.config
+                where env_var = %s
+            )
+            """,
+            (env_var, default_value, env_var),
+            include_database=False,
+        )
+
+
+def fetch_askme_config():
+    rows = run_sql(
+        """
+        select env_var as env_var_value, coalesce(env_value, '') as env_value_value
+        from askme.config
+        order by env_var
+        """,
+        include_database=False,
+    )
+    return {str(row[0]): str(row[1] or "") for row in rows}
+
+
+def askme_setup_is_ready():
+    try:
+        config_values = fetch_askme_config()
+    except mysql.connector.Error:
+        return False
+    required_keys = {env_var for env_var, _default_value in ASKME_CONFIG_ROWS}
+    for key in required_keys:
+        if not str(config_values.get(key, "")).strip():
+            return False
+    return True
+
+
+def save_askme_config(config_values):
+    cnx = None
+    cursor = None
+    try:
+        cnx = mysql_connection(get_connection_config(include_database=False))
+        cursor = cnx.cursor()
+        cursor.execute("delete from askme.config")
+        cursor.executemany(
+            """
+            insert into askme.config (env_var, env_value)
+            values (%s, %s)
+            """,
+            [
+                (env_var, str(config_values.get(env_var, "")).strip())
+                for env_var, _default_value in ASKME_CONFIG_ROWS
+            ],
+        )
         cnx.commit()
     except mysql.connector.Error:
         if cnx:
@@ -2402,14 +2533,20 @@ def airportdb_exists(*, autocommit=False):
 def build_nav_groups():
     groups = []
     show_performance = False
+    show_askme_genai = False
     if session.get("logged_in"):
         try:
             show_performance = airportdb_exists()
         except mysql.connector.Error:
             show_performance = False
+        show_askme_genai = askme_setup_is_ready()
 
     for group in NAV_GROUPS:
-        items = [dict(item) for item in group["items"]]
+        items = []
+        for item in group["items"]:
+            if item["endpoint"] == "askme_genai_page" and not show_askme_genai:
+                continue
+            items.append(dict(item))
         if group["label"] == "HeatWave" and show_performance:
             items.append(
                 {
@@ -2651,6 +2788,7 @@ def execute_heatwave_performance_query(sql_text):
 
 
 import pages.auth  # noqa: F401
+import pages.askme_genai  # noqa: F401
 import pages.connection_profile  # noqa: F401
 import pages.db_admin  # noqa: F401
 import pages.heatwave_genai  # noqa: F401
@@ -2660,6 +2798,7 @@ import pages.heatwave_ml  # noqa: F401
 import pages.home  # noqa: F401
 import pages.import_page  # noqa: F401
 import pages.nlsql  # noqa: F401
+import pages.setup_askme  # noqa: F401
 import pages.setup_configdb  # noqa: F401
 import pages.vision  # noqa: F401
 

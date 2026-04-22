@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-header">
+  <p class="eyebrow">Admin</p>
+  <h2>Setup Askme</h2>
+  <p>Maintain the AskME OCI and Object Storage settings stored in <code>askme.config</code>. Database access uses the current logged-in MySQL connection.</p>
+</section>
+
+<form method="post" class="panel-stack">
+  <section class="panel">
+    <h3>askme.config</h3>
+    <p class="helper-text">These values are used only for OCI/object storage access. Askme GenAI uses the current logged-in MySQL connection for database operations.</p>
+    <div class="field-grid">
+      {% for item in config_items %}
+      <label>
+        {{ item.env_var }}
+        <input type="text" name="{{ item.env_var }}" value="{{ item.env_value }}">
+      </label>
+      {% endfor %}
+    </div>
+    <p class="helper-text"><code>OCI_BUCKET_FOLDER</code> is treated as the base prefix used when uploaded files are written into object storage for each vector table.</p>
+    <div class="form-actions">
+      <button class="button primary" type="submit">Save Askme Config</button>
+    </div>
+  </section>
+</form>
+{% endblock %}

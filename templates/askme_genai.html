@@ -1,0 +1,332 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-header">
+  <p class="eyebrow">HeatWave</p>
+  <h2>Askme GenAI</h2>
+  <p>Use AskME-style vector search, answer generation, chat, and knowledge-base management from the shared <code>askme</code> schema. Database access uses the current logged-in MySQL connection.</p>
+</section>
+
+{% if not config_status.is_ready %}
+<section class="flash warning">
+  Configure <code>{{ config_status.missing_keys|join(", ") }}</code> in <a href="{{ url_for('setup_askme_page') }}">Admin &gt; Setup Askme</a> before using Askme GenAI.
+</section>
+{% endif %}
+
+<section class="tab-shell">
+  <div class="tab-strip" role="tablist" aria-label="Askme GenAI tabs">
+    {% for tab in tabs %}
+    <a
+      href="{{ url_for('askme_genai_page', tab=tab.id) }}"
+      class="tab-link {% if tab.id == active_tab %}active{% endif %}"
+      role="tab"
+      aria-selected="{% if tab.id == active_tab %}true{% else %}false{% endif %}"
+    >
+      {{ tab.label }}
+    </a>
+    {% endfor %}
+  </div>
+
+  {% if active_tab == "find-relevant-docs" %}
+  <form method="post" class="split-layout">
+    <input type="hidden" name="tab" value="{{ active_tab }}">
+    <input type="hidden" name="askme_action" value="find_relevant_docs">
+    <article class="panel">
+      <h3>Find Relevant Docs</h3>
+      <label>
+        Vector Tables
+        <select name="selected_tables" multiple size="8">
+          {% for item in available_tables %}
+          <option value="{{ item }}" {% if item in selected_tables %}selected{% endif %}>{{ item }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        LLM Model
+        <select name="generate_model_id">
+          {% for item in generation_models %}
+          <option value="{{ item }}" {% if item == selected_model %}selected{% endif %}>{{ item }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div class="field-row-two">
+        <label>
+          Minimum Similarity
+          <input type="number" name="min_similarity_score" min="0" max="1" step="0.01" value="{{ relevant_min_similarity }}">
+        </label>
+        <label>
+          Top K
+          <input type="number" name="topk" min="1" max="100" value="{{ relevant_topk }}">
+        </label>
+      </div>
+      <label class="full-width-field">
+        Question
+        <textarea name="question" rows="6">{{ relevant_question }}</textarea>
+      </label>
+      <div class="form-actions">
+        <button class="button primary" type="submit" {% if not config_status.is_ready %}disabled{% endif %}>Find Relevant Documents</button>
+      </div>
+    </article>
+
+    <article class="panel result-panel">
+      <h3>Matches</h3>
+      {% if answer_chunks_dataset.rows %}
+      <div class="table-wrap">
+        <table class="admin-table report-table">
+          <thead>
+            <tr>
+              {% for column in answer_chunks_dataset.columns %}
+              <th>{{ column }}</th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in answer_chunks_dataset.rows %}
+            <tr>
+              {% for value in row %}
+              <td>{{ value if value is not none and value != '' else '-' }}</td>
+              {% endfor %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="helper-text">Run the search to see the most relevant chunks from the selected vector tables.</p>
+      {% endif %}
+    </article>
+  </form>
+  {% elif active_tab == "free-style-answer" %}
+  <form method="post" class="split-layout">
+    <input type="hidden" name="tab" value="{{ active_tab }}">
+    <input type="hidden" name="askme_action" value="free_style_answer">
+    <article class="panel">
+      <h3>Free-style Answer</h3>
+      <label>
+        Vector Tables
+        <select name="selected_tables" multiple size="8">
+          {% for item in available_tables %}
+          <option value="{{ item }}" {% if item in selected_tables %}selected{% endif %}>{{ item }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        LLM Model
+        <select name="generate_model_id">
+          {% for item in generation_models %}
+          <option value="{{ item }}" {% if item == selected_model %}selected{% endif %}>{{ item }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="full-width-field">
+        Question
+        <textarea name="question" rows="6">{{ free_style_question }}</textarea>
+      </label>
+      <div class="form-actions">
+        <button class="button primary" type="submit" {% if not config_status.is_ready %}disabled{% endif %}>Answer Question</button>
+      </div>
+    </article>
+
+    <article class="panel result-panel">
+      <h3>Answer</h3>
+      {% if answer_text %}
+      <div class="nl2ml-response-copy">{{ answer_text }}</div>
+      {% else %}
+      <p class="helper-text">Ask a question to generate an answer from the selected AskME vector tables.</p>
+      {% endif %}
+    </article>
+  </form>
+  {% elif active_tab == "answer-summary" %}
+  <form method="post" class="split-layout">
+    <input type="hidden" name="tab" value="{{ active_tab }}">
+    <input type="hidden" name="askme_action" value="answer_summary">
+    <article class="panel">
+      <h3>Answer Summary</h3>
+      <label>
+        Vector Tables
+        <select name="selected_tables" multiple size="8">
+          {% for item in available_tables %}
+          <option value="{{ item }}" {% if item in selected_tables %}selected{% endif %}>{{ item }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        LLM Model
+        <select name="generate_model_id">
+          {% for item in generation_models %}
+          <option value="{{ item }}" {% if item == selected_model %}selected{% endif %}>{{ item }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="full-width-field">
+        Question
+        <textarea name="question" rows="6">{{ summary_question }}</textarea>
+      </label>
+      <div class="form-actions">
+        <button class="button primary" type="submit" {% if not config_status.is_ready %}disabled{% endif %}>Generate Summary</button>
+      </div>
+    </article>
+
+    <article class="panel result-panel">
+      <h3>Summary</h3>
+      {% if answer_text %}
+      <div class="nl2ml-response-copy">{{ answer_text }}</div>
+      {% else %}
+      <p class="helper-text">Generate a concise answer summary from the selected AskME vector tables.</p>
+      {% endif %}
+    </article>
+  </form>
+  {% elif active_tab == "chatbot" %}
+  <div class="panel-stack">
+    <section class="panel">
+      <h3>Chatbot</h3>
+      {% if chat_history %}
+      <div class="panel-stack">
+        {% for item in chat_history %}
+        <section class="panel modal-section">
+          <p><strong>User:</strong> {{ item.user_message if item.user_message is defined else '-' }}</p>
+          <p><strong>Assistant:</strong> {{ item.chat_bot_message if item.chat_bot_message is defined else '-' }}</p>
+        </section>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="helper-text">No chat history yet.</p>
+      {% endif %}
+    </section>
+
+    <form method="post" class="panel">
+      <input type="hidden" name="tab" value="{{ active_tab }}">
+      <input type="hidden" name="askme_action" value="chatbot">
+      <label>
+        Vector Tables
+        <select name="selected_tables" multiple size="8">
+          {% for item in available_tables %}
+          <option value="{{ item }}" {% if item in selected_tables %}selected{% endif %}>{{ item }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        LLM Model
+        <select name="generate_model_id">
+          {% for item in generation_models %}
+          <option value="{{ item }}" {% if item == selected_model %}selected{% endif %}>{{ item }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="full-width-field">
+        Message
+        <textarea name="question" rows="5">{{ chat_question }}</textarea>
+      </label>
+      <div class="form-actions">
+        <button class="button primary" type="submit" {% if not config_status.is_ready %}disabled{% endif %}>Send Message</button>
+      </div>
+    </form>
+
+    <form method="post" class="panel">
+      <input type="hidden" name="tab" value="{{ active_tab }}">
+      <input type="hidden" name="askme_action" value="clear_chat">
+      <div class="form-actions">
+        <button class="button secondary" type="submit">Clear Chat History</button>
+      </div>
+    </form>
+  </div>
+  {% else %}
+  <div class="panel-stack">
+    <section class="panel">
+      <h3>Current AskME Tables</h3>
+      {% if managed_tables_dataset.rows %}
+      <div class="table-wrap">
+        <table class="admin-table report-table">
+          <thead>
+            <tr>
+              {% for column in managed_tables_dataset.columns %}
+              <th>{{ column }}</th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in managed_tables_dataset.rows %}
+            <tr>
+              {% for value in row %}
+              <td>{{ value }}</td>
+              {% endfor %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="helper-text">No AskME vector tables found yet.</p>
+      {% endif %}
+    </section>
+
+    {% if management_message %}
+    <section class="flash {{ management_status or 'info' }}">
+      {{ management_message }}
+    </section>
+    {% endif %}
+
+    <form method="post" enctype="multipart/form-data" class="panel">
+      <input type="hidden" name="tab" value="{{ active_tab }}">
+      <input type="hidden" name="askme_action" value="kb_create">
+      <h3>Create Vector Table</h3>
+      <label>
+        Vector Table Name
+        <input type="text" name="table_name" value="{{ create_result.table_name if create_result else '' }}">
+      </label>
+      <label>
+        Files
+        <input type="file" name="files" multiple>
+      </label>
+      <p class="helper-text">Object storage target: <code>{{ config_values.OCI_BUCKET_NAME or '-' }}</code> / <code>{{ config_values.OCI_NAMESPACE or '-' }}</code> / <code>{{ config_values.OCI_BUCKET_FOLDER or '-' }}</code></p>
+      <div class="form-actions">
+        <button class="button primary" type="submit" {% if not config_status.is_ready %}disabled{% endif %}>Upload and Create</button>
+      </div>
+    </form>
+
+    <form method="post" class="panel">
+      <input type="hidden" name="tab" value="{{ active_tab }}">
+      <input type="hidden" name="askme_action" value="kb_delete">
+      <h3>Delete Vector Table</h3>
+      <label>
+        Existing Vector Table
+        <select name="delete_table_name">
+          <option value="">Choose a table</option>
+          {% for row in managed_tables_dataset.rows %}
+          <option value="{{ row[0] }}">{{ row[0] }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div class="form-actions">
+        <button class="button secondary" type="submit" {% if not config_status.is_ready %}disabled{% endif %}>Delete Vector Table</button>
+      </div>
+    </form>
+
+    <form method="post" class="panel" onsubmit="return confirm('Reset the AskME knowledge base by deleting all vector tables and object storage folders?');">
+      <input type="hidden" name="tab" value="{{ active_tab }}">
+      <input type="hidden" name="askme_action" value="kb_reset">
+      <h3>Reset Knowledge Base</h3>
+      <p class="helper-text">This removes all AskME vector tables in schema <code>askme</code> and deletes their configured object storage folders.</p>
+      <div class="form-actions">
+        <button class="button secondary" type="submit" {% if not config_status.is_ready %}disabled{% endif %}>Reset Knowledge Base</button>
+      </div>
+    </form>
+  </div>
+  {% endif %}
+
+  {% if citations_by_url %}
+  <section class="panel">
+    <h3>References</h3>
+    {% for item in citations_by_url %}
+    <section class="panel modal-section">
+      <p><strong>Document:</strong> {{ item.url or '-' }}</p>
+      {% for chunk in item.chunks %}
+      <p><strong>Similarity:</strong> {{ '%.4f'|format(chunk.similarity_score or 0) }}</p>
+      <div class="code-block">{{ chunk.content_chunk }}</div>
+      {% endfor %}
+    </section>
+    {% endfor %}
+  </section>
+  {% endif %}
+</section>
+{% endblock %}
