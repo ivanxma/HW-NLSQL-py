@@ -592,20 +592,26 @@ def _execute_nl2ml_sql(sql_text):
     cursor = None
     try:
         cnx = mysql_connection(get_connection_config(include_database=False))
-        result_sets = []
-        for result_index, result in enumerate(cnx.cmd_query_iter(normalized_sql), start=1):
-            if "columns" not in result:
-                continue
-            rows, _ = cnx.get_rows()
-            result_sets.append(
-                {
-                    "title": "Result Set {}".format(result_index),
-                    "columns": [str(column[0]) for column in result.get("columns", [])],
-                    "rows": [[_normalize_modal_cell(value) for value in row] for row in rows],
-                }
-            )
-
         cursor = cnx.cursor()
+        result_sets = []
+        cursor.execute(normalized_sql, map_results=True)
+        result_index = 1
+        while True:
+            if cursor.with_rows:
+                result_sets.append(
+                    {
+                        "title": "Result Set {}".format(result_index),
+                        "columns": list(cursor.column_names or ()),
+                        "rows": [
+                            [_normalize_modal_cell(value) for value in row]
+                            for row in cursor.fetchall()
+                        ],
+                    }
+                )
+            result_index += 1
+            if not cursor.nextset():
+                break
+
         cursor.execute(
             "select cast(@output as char) as output_value, cast(@nl2ml_options as char) as options_value"
         )
