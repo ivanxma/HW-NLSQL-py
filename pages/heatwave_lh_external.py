@@ -53,6 +53,9 @@ def _default_lh_external_form():
         "table_name": "",
         "selected_object_folder": "",
         "new_object_folder": "",
+        "upload_selected_object_folder": "",
+        "upload_new_object_folder": "",
+        "upload_use_new_folder": False,
         "oci_uri": "",
         "file_format": "csv",
         "has_header": True,
@@ -83,6 +86,9 @@ def _load_lh_external_form(source):
     form["table_name"] = str(source.get("table_name", "")).strip()
     form["selected_object_folder"] = str(source.get("selected_object_folder", "")).strip().strip("/")
     form["new_object_folder"] = str(source.get("new_object_folder", "")).strip().strip("/")
+    form["upload_selected_object_folder"] = str(source.get("upload_selected_object_folder", "")).strip().strip("/")
+    form["upload_new_object_folder"] = str(source.get("upload_new_object_folder", "")).strip().strip("/")
+    form["upload_use_new_folder"] = str(source.get("upload_use_new_folder", "")).strip().lower() in {"1", "true", "yes", "on"}
     form["oci_uri"] = str(source.get("oci_uri", "")).strip()
     file_format = str(source.get("file_format", form["file_format"])).strip().lower()
     form["file_format"] = file_format if file_format in HEATWAVE_LH_EXTERNAL_FORMATS else form["file_format"]
@@ -242,7 +248,16 @@ def _apply_object_storage_defaults(form_state, config_values, folder_options):
         form_state["oci_uri"] = _build_object_storage_base_uri(config_values, selected_folder)
 
 
-def _get_target_object_folder(form_state, config_values):
+def _get_target_object_folder(form_state, config_values, *, for_upload=False):
+    if for_upload:
+        if form_state.get("upload_use_new_folder"):
+            new_folder = _normalize_text(form_state.get("upload_new_object_folder")).strip("/")
+            if new_folder:
+                return new_folder
+        selected_folder = _normalize_text(form_state.get("upload_selected_object_folder")).strip("/")
+        if selected_folder:
+            return selected_folder
+
     new_folder = _normalize_text(form_state.get("new_object_folder")).strip("/")
     if new_folder:
         return new_folder
@@ -590,7 +605,7 @@ def heatwave_lh_external_page():
                     if not _object_storage_setup_is_ready(object_storage_setup):
                         flash("Configure Admin > Setup ObjectStorage before uploading files.", "warning")
                     else:
-                        target_folder = _get_target_object_folder(form_state, object_storage_setup)
+                        target_folder = _get_target_object_folder(form_state, object_storage_setup, for_upload=True)
                         uploaded_file = request.files.get("object_file")
                         object_name, uploaded_uri = _upload_object_storage_file(
                             uploaded_file,
@@ -600,6 +615,9 @@ def heatwave_lh_external_page():
                         if target_folder and target_folder not in object_folder_options:
                             object_folder_options = [target_folder] + object_folder_options
                         form_state["selected_object_folder"] = target_folder
+                        form_state["upload_selected_object_folder"] = target_folder
+                        form_state["upload_use_new_folder"] = False
+                        form_state["upload_new_object_folder"] = ""
                         form_state["new_object_folder"] = ""
                         form_state["oci_uri"] = uploaded_uri
                         object_folders_loaded = True
