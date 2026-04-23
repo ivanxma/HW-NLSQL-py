@@ -225,8 +225,9 @@ button {
 }
 
 .field-actions-inline {
-  display: grid;
+  display: inline-grid;
   align-content: end;
+  justify-self: start;
   gap: 8px;
 }
 
