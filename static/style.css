@@ -230,6 +230,11 @@ button {
   gap: 8px;
 }
 
+.lakehouse-oci-layout {
+  grid-template-columns: minmax(18rem, 24rem) minmax(0, 1fr);
+  align-items: start;
+}
+
 .tab-shell {
   margin-bottom: 24px;
 }

@@ -52,6 +52,7 @@ def _default_lh_external_form():
         "database_name": "",
         "table_name": "",
         "selected_object_folder": "",
+        "new_object_folder": "",
         "oci_uri": "",
         "file_format": "csv",
         "has_header": True,
@@ -81,6 +82,7 @@ def _load_lh_external_form(source):
     form["database_name"] = str(source.get("database_name", "")).strip()
     form["table_name"] = str(source.get("table_name", "")).strip()
     form["selected_object_folder"] = str(source.get("selected_object_folder", "")).strip().strip("/")
+    form["new_object_folder"] = str(source.get("new_object_folder", "")).strip().strip("/")
     form["oci_uri"] = str(source.get("oci_uri", "")).strip()
     file_format = str(source.get("file_format", form["file_format"])).strip().lower()
     form["file_format"] = file_format if file_format in HEATWAVE_LH_EXTERNAL_FORMATS else form["file_format"]
@@ -240,6 +242,39 @@ def _apply_object_storage_defaults(form_state, config_values, folder_options):
     form_state["selected_object_folder"] = selected_folder
     if not _normalize_text(form_state.get("oci_uri")) and _object_storage_setup_is_ready(config_values):
         form_state["oci_uri"] = _build_object_storage_base_uri(config_values, selected_folder)
+
+
+def _get_target_object_folder(form_state, config_values):
+    new_folder = _normalize_text(form_state.get("new_object_folder")).strip("/")
+    if new_folder:
+        return new_folder
+    selected_folder = _normalize_text(form_state.get("selected_object_folder")).strip("/")
+    if selected_folder:
+        return selected_folder
+    return _normalize_text(config_values.get("base_folder")).strip("/")
+
+
+def _upload_object_storage_file(file_storage, config_values, folder_name):
+    filename = _normalize_text(getattr(file_storage, "filename", ""))
+    if not filename:
+        raise ValueError("Choose a file to upload.")
+    object_name = filename if not folder_name else "{}/{}".format(folder_name.rstrip("/"), filename)
+    client = _get_object_storage_client(config_values)
+    namespace_name = _normalize_text(config_values.get("namespace_name"))
+    bucket_name = _normalize_text(config_values.get("bucket_name"))
+    try:
+        file_storage.stream.seek(0)
+        client.put_object(
+            namespace_name=namespace_name,
+            bucket_name=bucket_name,
+            object_name=object_name,
+            put_object_body=file_storage.stream.read(),
+        )
+    except Exception as error:
+        raise RuntimeError(
+            "Uploading the file to OCI Object Storage failed. Verify the Setup ObjectStorage values and OCI access."
+        ) from error
+    return object_name, _build_object_storage_base_uri(config_values, "") + object_name
 
 
 def _fetch_target_databases():
@@ -553,6 +588,24 @@ def heatwave_lh_external_page():
                         flash("Loaded object storage folders.", "info")
                     else:
                         flash("No object folders were found in the configured bucket path.", "info")
+                elif action == "upload_file":
+                    if not _object_storage_setup_is_ready(object_storage_setup):
+                        flash("Configure Admin > Setup ObjectStorage before uploading files.", "warning")
+                    else:
+                        target_folder = _get_target_object_folder(form_state, object_storage_setup)
+                        uploaded_file = request.files.get("object_file")
+                        object_name, uploaded_uri = _upload_object_storage_file(
+                            uploaded_file,
+                            object_storage_setup,
+                            target_folder,
+                        )
+                        if target_folder and target_folder not in object_folder_options:
+                            object_folder_options = [target_folder] + object_folder_options
+                        form_state["selected_object_folder"] = target_folder
+                        form_state["new_object_folder"] = ""
+                        form_state["oci_uri"] = uploaded_uri
+                        object_folders_loaded = True
+                        flash("Uploaded `{}` to OCI Object Storage.".format(object_name), "success")
                 else:
                     _validate_lh_external_form(form_state, database_names)
                     generated_sql = _build_heatwave_load_sql(form_state)

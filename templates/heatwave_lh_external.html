@@ -42,7 +42,7 @@
     {% if not database_names %}
     <p class="helper-text">No non-system databases are available for HeatWave load targets.</p>
     {% endif %}
-    <form method="post" class="form-grid" id="heatwave-lh-external-form">
+    <form method="post" class="form-grid" id="heatwave-lh-external-form" enctype="multipart/form-data">
       <input type="hidden" name="tab" value="{{ active_tab }}">
 
       <div class="field-row field-row-two full-width-field">
@@ -61,63 +61,93 @@
         </label>
       </div>
 
-      <div class="field-row field-row-uri full-width-field">
-        <label>
-          Object Folder
-          <select
-            name="selected_object_folder"
-            id="heatwave-lh-folder-select"
-            data-bucket-name="{{ object_storage_setup.bucket_name or '' }}"
-            data-namespace-name="{{ object_storage_setup.namespace_name or '' }}"
-          >
-            <option value="">Select folder</option>
-            {% for folder_name in object_folder_options %}
-            <option value="{{ folder_name }}" {% if form_state.selected_object_folder == folder_name %}selected{% endif %}>{{ folder_name }}</option>
-            {% endfor %}
-          </select>
-        </label>
+      <section class="split-layout lakehouse-oci-layout full-width-field">
+        <article class="panel">
+          <h4>Object Storage</h4>
+          <p class="helper-text">Upload a file into an existing folder or enter a new folder name. Folder loading is deferred until requested.</p>
+          <div class="field-grid">
+            <label>
+              Object Folder
+              <select
+                name="selected_object_folder"
+                id="heatwave-lh-folder-select"
+                data-bucket-name="{{ object_storage_setup.bucket_name or '' }}"
+                data-namespace-name="{{ object_storage_setup.namespace_name or '' }}"
+              >
+                <option value="">Select folder</option>
+                {% for folder_name in object_folder_options %}
+                <option value="{{ folder_name }}" {% if form_state.selected_object_folder == folder_name %}selected{% endif %}>{{ folder_name }}</option>
+                {% endfor %}
+              </select>
+            </label>
 
-        <div class="field-actions-inline">
-          <button
-            class="button secondary"
-            type="submit"
-            name="lh_external_action"
-            value="load_folders"
-            {% if not object_storage_setup_ready %}disabled{% endif %}
-          >
-            Load Folders
-          </button>
+            <label>
+              New Folder
+              <input type="text" name="new_object_folder" id="heatwave-lh-new-folder" value="{{ form_state.new_object_folder }}" placeholder="folder/subfolder">
+            </label>
+
+            <label>
+              Upload File
+              <input type="file" name="object_file">
+            </label>
+          </div>
+          <div class="inline-form">
+            <button
+              class="button secondary"
+              type="submit"
+              name="lh_external_action"
+              value="load_folders"
+              {% if not object_storage_setup_ready %}disabled{% endif %}
+            >
+              Load Folders
+            </button>
+            <button
+              class="button primary"
+              type="submit"
+              name="lh_external_action"
+              value="upload_file"
+              {% if not object_storage_setup_ready %}disabled{% endif %}
+            >
+              Upload File
+            </button>
+          </div>
           {% if not object_folders_loaded %}
-          <p class="helper-text compact-helper">Deferred load. The page opens first; load the bucket folders only when needed.</p>
+          <p class="helper-text compact-helper">The page opens first. Click <code>Load Folders</code> only when you need the OCI Object Storage folder list.</p>
           {% endif %}
-        </div>
+        </article>
 
-        <label class="field-span-wide">
-          OCI URL
-          <input
-            type="text"
-            id="heatwave-lh-oci-uri"
-            name="oci_uri"
-            value="{{ form_state.oci_uri }}"
-            placeholder="oci://&lt;bucketname&gt;@&lt;mynamespace&gt;/&lt;folder&gt;/&lt;file pattern&gt;"
-            required
-          >
-        </label>
+        <article class="panel">
+          <h4>OCI URL</h4>
+          <p class="helper-text">Uploading a file fills this URL with the uploaded object path. You can also edit the OCI URL directly or use file patterns.</p>
+          <label class="full-width-field">
+            OCI URL
+            <input
+              type="text"
+              id="heatwave-lh-oci-uri"
+              name="oci_uri"
+              value="{{ form_state.oci_uri }}"
+              placeholder="oci://&lt;bucketname&gt;@&lt;mynamespace&gt;/&lt;folder&gt;/&lt;file pattern&gt;"
+              required
+            >
+          </label>
 
-        <label>
-          Format
-          <select name="file_format" required>
-            {% for file_format in supported_formats %}
-            <option value="{{ file_format }}" {% if form_state.file_format == file_format %}selected{% endif %}>{{ file_format }}</option>
-            {% endfor %}
-          </select>
-        </label>
+          <div class="field-row field-row-two">
+            <label>
+              Format
+              <select name="file_format" required>
+                {% for file_format in supported_formats %}
+                <option value="{{ file_format }}" {% if form_state.file_format == file_format %}selected{% endif %}>{{ file_format }}</option>
+                {% endfor %}
+              </select>
+            </label>
 
-        <label class="checkbox-field field-checkbox-cell">
-          <input type="checkbox" name="has_header" value="1" {% if form_state.has_header %}checked{% endif %}>
-          <span>Header row</span>
-        </label>
-      </div>
+            <label class="checkbox-field field-checkbox-cell">
+              <input type="checkbox" name="has_header" value="1" {% if form_state.has_header %}checked{% endif %}>
+              <span>Header row</span>
+            </label>
+          </div>
+        </article>
+      </section>
 
       <section class="option-group full-width-field">
         <h4>HeatWave_load Options</h4>
@@ -577,6 +607,7 @@
     const form = document.getElementById("heatwave-lh-external-form");
     const status = document.getElementById("heatwave-lh-external-run-status");
     const folderSelect = document.getElementById("heatwave-lh-folder-select");
+    const newFolderInput = document.getElementById("heatwave-lh-new-folder");
     const ociUriInput = document.getElementById("heatwave-lh-oci-uri");
     const modal = document.getElementById("heatwave-lh-external-value-modal");
     const modalTitle = document.getElementById("heatwave-lh-external-value-title");
@@ -603,7 +634,14 @@
         status.classList.add("visible");
       });
     }
-    const buildBaseUri = (folderValue) => {
+    const normalizedFolderValue = () => {
+      const newFolderValue = (newFolderInput ? newFolderInput.value : "").trim();
+      if (newFolderValue) {
+        return newFolderValue.replace(/^\/+|\/+$/g, "");
+      }
+      return String(folderSelect ? folderSelect.value : "").trim().replace(/^\/+|\/+$/g, "");
+    };
+    const buildBaseUri = () => {
       if (!folderSelect) {
         return "";
       }
@@ -612,27 +650,40 @@
       if (!bucketName || !namespaceName) {
         return "";
       }
-      const normalizedFolder = String(folderValue || "").trim().replace(/^\/+|\/+$/g, "");
+      const normalizedFolder = normalizedFolderValue();
       if (normalizedFolder) {
         return `oci://${bucketName}@${namespaceName}/${normalizedFolder}/`;
       }
       return `oci://${bucketName}@${namespaceName}/`;
     };
-    let currentBaseUri = buildBaseUri(folderSelect ? folderSelect.value : "");
+    let currentBaseUri = buildBaseUri();
+    const updateOciUriBase = () => {
+      if (!ociUriInput) {
+        return;
+      }
+      const nextBaseUri = buildBaseUri();
+      if (!nextBaseUri) {
+        return;
+      }
+      const currentValue = String(ociUriInput.value || "");
+      let suffix = "";
+      if (currentBaseUri && currentValue.startsWith(currentBaseUri)) {
+        suffix = currentValue.slice(currentBaseUri.length).replace(/^\/+/, "");
+      }
+      ociUriInput.value = `${nextBaseUri}${suffix}`;
+      currentBaseUri = nextBaseUri;
+    };
     if (folderSelect && ociUriInput) {
       folderSelect.addEventListener("change", () => {
-        const nextBaseUri = buildBaseUri(folderSelect.value);
-        if (!nextBaseUri) {
-          return;
+        if (newFolderInput) {
+          newFolderInput.value = "";
         }
-        const currentValue = String(ociUriInput.value || "");
-        let suffix = "";
-        if (currentBaseUri && currentValue.startsWith(currentBaseUri)) {
-          suffix = currentValue.slice(currentBaseUri.length).replace(/^\/+/, "");
-        }
-        ociUriInput.value = `${nextBaseUri}${suffix}`;
-        currentBaseUri = nextBaseUri;
+        updateOciUriBase();
       });
+    }
+    if (newFolderInput && ociUriInput) {
+      newFolderInput.addEventListener("change", updateOciUriBase);
+      newFolderInput.addEventListener("blur", updateOciUriBase);
     }
     if (definitionModal && definitionCloseButton) {
       const closeDefinitionModal = () => {
