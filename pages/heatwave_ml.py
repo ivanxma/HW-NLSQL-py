@@ -212,6 +212,27 @@ IRIS_ML_EXPLAIN_TABLE_CALL_TEXT = (
 NL2ML_DOCS_URL = "https://dev.mysql.com/doc/heatwave/en/mys-hwaml-nl2ml.html"
 NL2ML_DEFAULT_PROMPT = "How to do HeatWave Training with dataset ml_data.iris_train."
 NL2ML_OUTPUT_VAR = "@output"
+CLASSIFICATION_OPTIMIZATION_METRICS = [
+    {"value": "accuracy", "label": "accuracy"},
+    {"value": "f1", "label": "f1"},
+    {"value": "f1_macro", "label": "f1_macro"},
+    {"value": "f1_micro", "label": "f1_micro"},
+    {"value": "f1_weighted", "label": "f1_weighted"},
+    {"value": "neg_log_loss", "label": "neg_log_loss"},
+    {"value": "precision", "label": "precision"},
+    {"value": "precision_macro", "label": "precision_macro"},
+    {"value": "precision_micro", "label": "precision_micro"},
+    {"value": "precision_weighted", "label": "precision_weighted"},
+    {"value": "recall", "label": "recall"},
+    {"value": "recall_macro", "label": "recall_macro"},
+    {"value": "recall_micro", "label": "recall_micro"},
+    {"value": "recall_weighted", "label": "recall_weighted"},
+    {"value": "roc_auc", "label": "roc_auc"},
+]
+DEFAULT_CLASSIFICATION_OPTIMIZATION_METRIC = CLASSIFICATION_OPTIMIZATION_METRICS[0]["value"]
+IRIS_ML_TRAIN_CONNECTION_TIMEOUT_SECONDS = 30
+IRIS_ML_TRAIN_READ_TIMEOUT_SECONDS = 1800
+IRIS_ML_TRAIN_WRITE_TIMEOUT_SECONDS = 1800
 
 
 def _iris_insert_sql(table_name):
@@ -222,6 +243,33 @@ def _iris_insert_sql(table_name):
         column_sql,
         placeholders,
     )
+
+
+def _normalize_classification_optimization_metric(value):
+    normalized = str(value or "").strip()
+    allowed = {item["value"] for item in CLASSIFICATION_OPTIMIZATION_METRICS}
+    return normalized if normalized in allowed else DEFAULT_CLASSIFICATION_OPTIMIZATION_METRIC
+
+
+def _build_iris_ml_train_call_text(optimization_metric=""):
+    normalized_metric = _normalize_classification_optimization_metric(optimization_metric)
+    options_parts = [
+        "'task', 'classification'",
+        "'exclude_column_list', JSON_ARRAY('my_row_id')",
+        "'optimization_metric', '{}'".format(normalized_metric),
+    ]
+    return (
+        "CALL sys.ML_TRAIN('ml_data.iris_train', 'class', "
+        "JSON_OBJECT({}), @model);"
+    ).format(", ".join(options_parts))
+
+
+def _iris_ml_train_connection_config():
+    config = dict(get_connection_config(include_database=False))
+    config["connection_timeout"] = IRIS_ML_TRAIN_CONNECTION_TIMEOUT_SECONDS
+    config["read_timeout"] = IRIS_ML_TRAIN_READ_TIMEOUT_SECONDS
+    config["write_timeout"] = IRIS_ML_TRAIN_WRITE_TIMEOUT_SECONDS
+    return config
 
 
 def _fetch_iris_train_table():
@@ -339,6 +387,36 @@ def _consume_pending_results(cursor):
     while cursor.nextset():
         if cursor.with_rows:
             cursor.fetchall()
+
+
+def _collect_pending_resultsets(cursor, title_prefix="Result Set"):
+    datasets = []
+    result_index = 1
+    if cursor.with_rows:
+        datasets.append(
+            {
+                "title": "{} {}".format(title_prefix, result_index),
+                "columns": list(cursor.column_names or ()),
+                "rows": [
+                    [_normalize_modal_cell(value) for value in row]
+                    for row in cursor.fetchall()
+                ],
+            }
+        )
+    while cursor.nextset():
+        result_index += 1
+        if cursor.with_rows:
+            datasets.append(
+                {
+                    "title": "{} {}".format(title_prefix, result_index),
+                    "columns": list(cursor.column_names or ()),
+                    "rows": [
+                        [_normalize_modal_cell(value) for value in row]
+                        for row in cursor.fetchall()
+                    ],
+                }
+            )
+    return datasets
 
 
 def _fetch_supported_generation_llms():
@@ -708,31 +786,41 @@ def _initialize_iris_database():
             cnx.close()
 
 
-def _execute_iris_ml_train():
+def _execute_iris_ml_train(optimization_metric=""):
     ml_schema_name = _ml_schema_name()
     started_at = datetime.now(timezone.utc)
     started_counter = time.perf_counter()
     cnx = None
     cursor = None
+    call_text = _build_iris_ml_train_call_text(optimization_metric)
     try:
-        cnx = mysql_connection(get_connection_config(include_database=False))
+        cnx = mysql_connection(_iris_ml_train_connection_config())
         cursor = cnx.cursor()
         cursor.execute("set @model = 'iris_model'")
-        cursor.execute(IRIS_ML_TRAIN_CALL_TEXT)
-        _consume_pending_results(cursor)
+        cursor.execute(call_text)
+        procedure_datasets = _collect_pending_resultsets(cursor, title_prefix="ML_TRAIN Result")
         cnx.commit()
         finished_at = datetime.now(timezone.utc)
         return {
-            "call_text": IRIS_ML_TRAIN_CALL_TEXT,
+            "call_text": call_text,
             "started_at": started_at,
             "finished_at": finished_at,
             "elapsed_seconds": time.perf_counter() - started_counter,
+            "procedure_datasets": procedure_datasets,
             "model_catalog": _fetch_model_catalog(ml_schema_name),
             "ml_schema_name": ml_schema_name,
         }
-    except mysql.connector.Error:
-        if cnx:
-            cnx.rollback()
+    except mysql.connector.Error as error:
+        if cnx and cnx.is_connected():
+            try:
+                cnx.rollback()
+            except mysql.connector.Error:
+                pass
+        if getattr(error, "errno", None) in {2006, 2013}:
+            raise RuntimeError(
+                "The MySQL connection was lost while ML_TRAIN was running. "
+                "The training job may still be processing on the server. Check the model catalog after a short wait."
+            ) from error
         raise
     finally:
         if cursor:
@@ -935,6 +1023,7 @@ def heatwave_ml_page():
     nl2ml_output_variable = None
     nl2ml_options_variable = None
     nl2ml_result_tabs = []
+    train_result_tabs = []
     nl2ml_generation_result = None
     nl2ml_execution_result = None
     left_panel_table = {"columns": [], "rows": []}
@@ -951,6 +1040,9 @@ def heatwave_ml_page():
     ml_call_title = "ML Syntax"
     ml_schema_name = _ml_schema_name()
     iris_ready = False
+    selected_classification_optimization_metric = _normalize_classification_optimization_metric(
+        request.values.get("classification_optimization_metric", "")
+    )
 
     try:
         supported_generation_llms = _fetch_supported_generation_llms()
@@ -964,12 +1056,23 @@ def heatwave_ml_page():
                     init_result = _initialize_iris_database()
                     flash("Schema `ml_data` and the Iris demo tables were initialized.", "success")
                 elif current_action == "execute_ml_train":
-                    ml_call_text = IRIS_ML_TRAIN_CALL_TEXT
+                    selected_classification_optimization_metric = _normalize_classification_optimization_metric(
+                        request.form.get("classification_optimization_metric", "")
+                    )
+                    ml_call_text = _build_iris_ml_train_call_text(selected_classification_optimization_metric)
                     ml_call_title = "ML_TRAIN Syntax"
                     if not _table_exists("ml_data", "iris_train"):
                         raise ValueError("Initialize IrisDB before running ML_TRAIN.")
-                    train_result = _execute_iris_ml_train()
+                    train_result = _execute_iris_ml_train(selected_classification_optimization_metric)
                     action_result = train_result
+                    train_result_tabs = [
+                        {
+                            "id": "ml-train-result-{}".format(index + 1),
+                            "label": dataset.get("title") or "Result Set {}".format(index + 1),
+                            "dataset": dataset,
+                        }
+                        for index, dataset in enumerate(train_result.get("procedure_datasets") or [])
+                    ]
                     model_catalog = train_result["model_catalog"]
                     model_catalog_records = _build_model_catalog_records(model_catalog)
                     ml_schema_name = train_result["ml_schema_name"]
@@ -1099,6 +1202,7 @@ def heatwave_ml_page():
         nl2ml_output_variable=nl2ml_output_variable,
         nl2ml_options_variable=nl2ml_options_variable,
         nl2ml_result_tabs=nl2ml_result_tabs,
+        train_result_tabs=train_result_tabs,
         nl2ml_generation_result=nl2ml_generation_result,
         nl2ml_execution_result=nl2ml_execution_result,
         iris_ready=iris_ready,
@@ -1118,7 +1222,9 @@ def heatwave_ml_page():
         ml_schema_name=ml_schema_name,
         ml_call_text=ml_call_text,
         ml_call_title=ml_call_title,
-        ml_train_call_text_default=IRIS_ML_TRAIN_CALL_TEXT,
+        ml_train_call_text_default=_build_iris_ml_train_call_text(selected_classification_optimization_metric),
+        classification_optimization_metrics=CLASSIFICATION_OPTIMIZATION_METRICS,
+        selected_classification_optimization_metric=selected_classification_optimization_metric,
         ml_model_load_call_text_default=IRIS_ML_MODEL_LOAD_CALL_TEXT,
         ml_predict_row_call_text_default=IRIS_ML_PREDICT_ROW_CALL_TEXT,
         ml_predict_table_call_text_default=IRIS_ML_PREDICT_TABLE_CALL_TEXT,

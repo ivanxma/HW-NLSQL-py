@@ -691,6 +691,25 @@ textarea {
   justify-content: flex-start;
 }
 
+.heatwave-ml-action-row {
+  align-items: end;
+}
+
+.heatwave-ml-action-row > form {
+  margin: 0;
+}
+
+.heatwave-ml-train-form {
+  display: inline-flex;
+  align-items: end;
+  gap: 12px;
+  flex-wrap: nowrap;
+}
+
+.heatwave-ml-train-metric {
+  min-width: 220px;
+}
+
 @media (max-width: 980px) {
   .field-row-two,
   .field-row-uri {

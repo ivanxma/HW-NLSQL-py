@@ -31,15 +31,23 @@
   <section class="panel tab-panel">
     <h3>Iris</h3>
     <p class="helper-text">The page recreates schema <code>ml_data</code> with <code>iris_train</code>, <code>iris_test</code>, and <code>iris_validate</code>.</p>
-    <div class="inline-form">
+    <div class="inline-form heatwave-ml-action-row">
       <form method="post" id="iris-init-form" onsubmit="return confirm('Drop and recreate schema ml_data?');">
         <input type="hidden" name="tab" value="{{ active_tab }}">
         <input type="hidden" name="heatwave_ml_action" value="initialize_iris">
         <button class="button primary" type="submit">Initialize IrisDB</button>
       </form>
-      <form method="post" id="iris-train-form">
+      <form method="post" id="iris-train-form" class="heatwave-ml-train-form">
         <input type="hidden" name="tab" value="{{ active_tab }}">
         <input type="hidden" name="heatwave_ml_action" value="execute_ml_train">
+        <label class="heatwave-ml-train-metric">
+          optimization_metric
+          <select name="classification_optimization_metric" id="iris-train-optimization-metric">
+            {% for item in classification_optimization_metrics %}
+            <option value="{{ item.value }}" {% if item.value == selected_classification_optimization_metric %}selected{% endif %}>{{ item.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
         <button class="button primary" type="submit" {% if not iris_ready %}disabled{% endif %}>Execute ML_TRAIN</button>
       </form>
       <form method="post" id="iris-model-load-form">
@@ -138,6 +146,64 @@
     </article>
 
     <article class="panel result-panel">
+      {% if train_result_tabs %}
+      <h3>ML_TRAIN Output</h3>
+      <div class="tab-strip result-tab-strip" role="tablist" aria-label="ML_TRAIN result tabs">
+        {% for tab in train_result_tabs %}
+        <button
+          class="tab-link result-tab-link {% if loop.first %}active{% endif %}"
+          type="button"
+          data-train-result-tab="{{ tab.id }}"
+          aria-selected="{% if loop.first %}true{% else %}false{% endif %}"
+        >
+          {{ tab.label }}
+        </button>
+        {% endfor %}
+      </div>
+
+      {% for tab in train_result_tabs %}
+      <section class="result-tab-panel" data-train-result-panel="{{ tab.id }}" {% if not loop.first %}hidden{% endif %}>
+        {% if tab.dataset.columns %}
+        <div class="table-wrap">
+          <table class="admin-table report-table">
+            <thead>
+              <tr>
+                {% for column in tab.dataset.columns %}
+                <th>{{ column }}</th>
+                {% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in tab.dataset.rows %}
+              <tr>
+                {% for value in row %}
+                <td>
+                  <button
+                    class="report-cell-button"
+                    type="button"
+                    data-report-value="{{ value if value is not none else '' }}"
+                    data-report-column="{{ tab.dataset.columns[loop.index0] }}"
+                  >
+                    {{ value if value is not none and value != '' else "-" }}
+                  </button>
+                </td>
+                {% endfor %}
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="{{ tab.dataset.columns|length if tab.dataset.columns else 1 }}">No rows returned.</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="helper-text">This result set returned no columns.</p>
+        {% endif %}
+      </section>
+      {% endfor %}
+      {% endif %}
+
       {% if score_records %}
       <h3>Score Output</h3>
         {% for record in score_records %}
@@ -525,6 +591,7 @@
   (() => {
     const initForm = document.getElementById("iris-init-form");
     const trainForm = document.getElementById("iris-train-form");
+    const trainMetricSelect = document.getElementById("iris-train-optimization-metric");
     const modelLoadForm = document.getElementById("iris-model-load-form");
     const predictRowForm = document.getElementById("iris-predict-row-form");
     const predictTableForm = document.getElementById("iris-predict-table-form");
@@ -575,8 +642,35 @@
       });
     }
 
+    function buildTrainCallText() {
+      const metricValue = trainMetricSelect ? trainMetricSelect.value : {{ selected_classification_optimization_metric|tojson }};
+      const options = [
+        "'task', 'classification'",
+        "'exclude_column_list', JSON_ARRAY('my_row_id')",
+        `'optimization_metric', '${metricValue}'`,
+      ];
+      return `CALL sys.ML_TRAIN('ml_data.iris_train', 'class', JSON_OBJECT(${options.join(", ")}), @model);`;
+    }
+
     submitWithInfo(initForm, "Initialize Syntax", "DROP DATABASE IF EXISTS ml_data;", "Status : Initializing IrisDB");
-    submitWithInfo(trainForm, "ML_TRAIN Syntax", {{ ml_train_call_text_default|tojson }}, "Status : Running ML_TRAIN");
+    if (trainForm) {
+      trainForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        if (callInfo) {
+          callInfo.hidden = false;
+        }
+        if (callLabel) {
+          callLabel.textContent = "ML_TRAIN Syntax";
+        }
+        if (callText) {
+          callText.value = buildTrainCallText();
+        }
+        markRunning("Status : Running ML_TRAIN");
+        window.setTimeout(() => {
+          trainForm.submit();
+        }, 80);
+      });
+    }
     submitWithInfo(modelLoadForm, "ML_MODEL_LOAD Syntax", {{ ml_model_load_call_text_default|tojson }}, "Status : Running ML_MODEL_LOAD");
     submitWithInfo(predictRowForm, "ML_PREDICT_ROW Syntax", {{ ml_predict_row_call_text_default|tojson }}, "Status : Running ML_PREDICT_ROW");
     submitWithInfo(predictTableForm, "ML_PREDICT_TABLE Syntax", {{ ml_predict_table_call_text_default|tojson }}, "Status : Running ML_PREDICT_TABLE");
@@ -615,6 +709,31 @@
     tabButtons.forEach((button) => {
       button.addEventListener("click", () => {
         activateTab(button.dataset.resultTab || "");
+      });
+    });
+  })();
+
+  (() => {
+    const tabButtons = Array.from(document.querySelectorAll("[data-train-result-tab]"));
+    const tabPanels = Array.from(document.querySelectorAll("[data-train-result-panel]"));
+    if (!tabButtons.length || !tabPanels.length) {
+      return;
+    }
+
+    const activateTab = (targetId) => {
+      tabButtons.forEach((button) => {
+        const isActive = button.dataset.trainResultTab === targetId;
+        button.classList.toggle("active", isActive);
+        button.setAttribute("aria-selected", isActive ? "true" : "false");
+      });
+      tabPanels.forEach((panel) => {
+        panel.hidden = panel.dataset.trainResultPanel !== targetId;
+      });
+    };
+
+    tabButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        activateTab(button.dataset.trainResultTab || "");
       });
     });
   })();
