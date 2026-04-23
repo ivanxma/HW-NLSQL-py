@@ -75,6 +75,30 @@
             Default database
             <input name="database" type="text" value="{{ form_profile.database }}">
           </label>
+          <label>
+            Connection timeout (seconds)
+            <input name="connection_timeout" type="number" min="1" step="1" value="{{ form_profile.connection_timeout }}" placeholder="MySQL default">
+          </label>
+          <label>
+            Read timeout (seconds)
+            <input name="read_timeout" type="number" min="1" step="1" value="{{ form_profile.read_timeout }}" placeholder="MySQL default">
+          </label>
+          <label>
+            Write timeout (seconds)
+            <input name="write_timeout" type="number" min="1" step="1" value="{{ form_profile.write_timeout }}" placeholder="MySQL default">
+          </label>
+          <label>
+            Max execution time (ms)
+            <input name="max_execution_time" type="number" min="0" step="1" value="{{ form_profile.max_execution_time }}" placeholder="MySQL default">
+          </label>
+          <label>
+            Wait timeout (seconds)
+            <input name="wait_timeout" type="number" min="1" step="1" value="{{ form_profile.wait_timeout }}" placeholder="MySQL default">
+          </label>
+          <label>
+            Interactive timeout (seconds)
+            <input name="interactive_timeout" type="number" min="1" step="1" value="{{ form_profile.interactive_timeout }}" placeholder="MySQL default">
+          </label>
           <div class="form-actions">
             <button class="button primary" type="submit">Save Profile</button>
           </div>

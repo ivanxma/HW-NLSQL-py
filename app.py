@@ -27,10 +27,13 @@ DEFAULT_PROFILE = {
     "host": "",
     "port": 3306,
     "database": "performance_schema",
+    "connection_timeout": "",
+    "read_timeout": "",
+    "write_timeout": "",
+    "max_execution_time": "",
+    "wait_timeout": "",
+    "interactive_timeout": "",
 }
-MYSQL_CONNECTION_TIMEOUT_SECONDS = 10
-MYSQL_READ_TIMEOUT_SECONDS = 30
-MYSQL_WRITE_TIMEOUT_SECONDS = 30
 SYSTEM_DATABASES = {"information_schema", "mysql", "performance_schema", "sys"}
 DASHBOARD_TABS = [
     {"id": "demo", "label": "Demo"},
@@ -166,12 +169,32 @@ def _normalized_port(value):
         return DEFAULT_PROFILE["port"]
 
 
+def _normalized_optional_timeout(value, *, allow_zero=False):
+    if value in (None, ""):
+        return ""
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        return ""
+    if normalized > 0:
+        return normalized
+    if allow_zero and normalized == 0:
+        return 0
+    return ""
+
+
 def normalize_profile(payload):
     return {
         "name": str(payload.get("name", "")).strip(),
         "host": str(payload.get("host", "")).strip(),
         "port": _normalized_port(payload.get("port")),
         "database": str(payload.get("database", "")).strip(),
+        "connection_timeout": _normalized_optional_timeout(payload.get("connection_timeout")),
+        "read_timeout": _normalized_optional_timeout(payload.get("read_timeout")),
+        "write_timeout": _normalized_optional_timeout(payload.get("write_timeout")),
+        "max_execution_time": _normalized_optional_timeout(payload.get("max_execution_time"), allow_zero=True),
+        "wait_timeout": _normalized_optional_timeout(payload.get("wait_timeout")),
+        "interactive_timeout": _normalized_optional_timeout(payload.get("interactive_timeout")),
     }
 
 
@@ -254,6 +277,56 @@ def get_connection_summary():
     return "{host}:{port}/{database}".format(**profile)
 
 
+def fetch_connection_timeout_settings():
+    default_values = {
+        "connection_timeout": "",
+        "read_timeout": "",
+        "write_timeout": "",
+        "max_execution_time": "",
+        "wait_timeout": "",
+        "interactive_timeout": "",
+    }
+    profile = get_session_profile()
+    default_values["connection_timeout"] = profile.get("connection_timeout", "")
+    if not session.get("logged_in"):
+        return default_values
+    try:
+        rows = run_sql(
+            """
+            select
+              @@session.net_read_timeout as net_read_timeout,
+              @@session.net_write_timeout as net_write_timeout,
+              @@session.max_execution_time as max_execution_time,
+              @@session.wait_timeout as wait_timeout,
+              @@session.interactive_timeout as interactive_timeout
+            """,
+            include_database=False,
+        )
+    except mysql.connector.Error:
+        return default_values
+    row = rows[0] if rows else ("", "", "", "", "")
+    default_values["read_timeout"] = row[0]
+    default_values["write_timeout"] = row[1]
+    default_values["max_execution_time"] = row[2]
+    default_values["wait_timeout"] = row[3]
+    default_values["interactive_timeout"] = row[4]
+    return default_values
+
+
+def get_connection_timeout_summary(timeout_settings=None):
+    values = timeout_settings or fetch_connection_timeout_settings()
+    if not any(str(values.get(key, "")).strip() for key in values):
+        return "Unavailable"
+    return "/".join(
+        (
+            str(values["connection_timeout"] or "-"),
+            str(values["read_timeout"] or "-"),
+            str(values["write_timeout"] or "-"),
+            str(values["max_execution_time"] if values["max_execution_time"] != "" else "-"),
+        )
+    )
+
+
 def clear_login_state(keep_profile=True):
     profile = get_session_profile() if keep_profile else None
     session["logged_in"] = False
@@ -272,12 +345,15 @@ def get_connection_config(user=None, password=None, include_database=True):
     config = {
         "host": profile["host"],
         "port": profile["port"],
-        "connection_timeout": MYSQL_CONNECTION_TIMEOUT_SECONDS,
-        "read_timeout": MYSQL_READ_TIMEOUT_SECONDS,
-        "write_timeout": MYSQL_WRITE_TIMEOUT_SECONDS,
     }
     if include_database and profile["database"]:
         config["database"] = profile["database"]
+    if profile["connection_timeout"]:
+        config["connection_timeout"] = profile["connection_timeout"]
+    if profile["read_timeout"]:
+        config["read_timeout"] = profile["read_timeout"]
+    if profile["write_timeout"]:
+        config["write_timeout"] = profile["write_timeout"]
     resolved_user = session.get("db_user", "") if user is None else user
     resolved_password = session.get("db_password", "") if password is None else password
     if resolved_user:
@@ -287,9 +363,35 @@ def get_connection_config(user=None, password=None, include_database=True):
     return config
 
 
+def _apply_connection_profile_session_settings(cnx, profile=None):
+    active_profile = normalize_profile(profile or get_session_profile())
+    assignments = []
+    if active_profile["read_timeout"]:
+        assignments.append(("net_read_timeout", int(active_profile["read_timeout"])))
+    if active_profile["write_timeout"]:
+        assignments.append(("net_write_timeout", int(active_profile["write_timeout"])))
+    if active_profile["max_execution_time"] != "":
+        assignments.append(("max_execution_time", int(active_profile["max_execution_time"])))
+    if active_profile["wait_timeout"]:
+        assignments.append(("wait_timeout", int(active_profile["wait_timeout"])))
+    if active_profile["interactive_timeout"]:
+        assignments.append(("interactive_timeout", int(active_profile["interactive_timeout"])))
+    if not assignments:
+        return
+    cursor = None
+    try:
+        cursor = cnx.cursor()
+        for variable_name, variable_value in assignments:
+            cursor.execute(f"SET SESSION {variable_name} = {variable_value}")
+    finally:
+        if cursor:
+            cursor.close()
+
+
 def mysql_connection(config=None, *, autocommit=False):
     cnx = mysql.connector.connect(**(config or get_connection_config()))
     cnx.can_consume_results = True
+    _apply_connection_profile_session_settings(cnx)
     cnx.autocommit = bool(autocommit)
     return cnx
 
@@ -467,6 +569,37 @@ def login_required(route_handler):
         return route_handler(*args, **kwargs)
 
     return wrapped
+
+
+@app.route("/connection-timeouts", methods=["POST"])
+@login_required
+def update_connection_timeouts():
+    current_profile = get_session_profile()
+    if not current_profile.get("name"):
+        flash("Choose a saved connection profile before changing timeout settings.", "warning")
+        return redirect(request.referrer or url_for("home"))
+
+    updated_profile = dict(current_profile)
+    updated_profile["connection_timeout"] = _normalized_optional_timeout(request.form.get("connection_timeout"))
+    updated_profile["read_timeout"] = _normalized_optional_timeout(request.form.get("read_timeout"))
+    updated_profile["write_timeout"] = _normalized_optional_timeout(request.form.get("write_timeout"))
+    updated_profile["max_execution_time"] = _normalized_optional_timeout(
+        request.form.get("max_execution_time"),
+        allow_zero=True,
+    )
+    updated_profile["wait_timeout"] = _normalized_optional_timeout(request.form.get("wait_timeout"))
+    updated_profile["interactive_timeout"] = _normalized_optional_timeout(request.form.get("interactive_timeout"))
+
+    existing_profiles = load_profiles()
+    save_profiles(
+        [
+            updated_profile if row["name"].lower() == updated_profile["name"].lower() else row
+            for row in existing_profiles
+        ]
+    )
+    set_session_profile(updated_profile)
+    flash("Connection timeout settings updated.", "success")
+    return redirect(request.referrer or url_for("home"))
 
 
 def validate_user(user, password):
@@ -2690,6 +2823,7 @@ def answer_query_on_image(question, model_id, image_base64):
 
 
 def render_dashboard(template_name, **context):
+    connection_timeout_settings = fetch_connection_timeout_settings()
     return render_template(
         template_name,
         app_title=APP_TITLE,
@@ -2697,6 +2831,8 @@ def render_dashboard(template_name, **context):
         current_user=session.get("db_user", ""),
         current_profile_name=session.get("profile_name", ""),
         connection_summary=get_connection_summary(),
+        connection_timeout_summary=get_connection_timeout_summary(connection_timeout_settings),
+        connection_timeout_settings=connection_timeout_settings,
         logged_in=bool(session.get("logged_in")),
         current_endpoint=request.endpoint or "",
         current_table="",

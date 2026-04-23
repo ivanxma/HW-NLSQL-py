@@ -27,6 +27,10 @@
             <span class="meta-label">Connection</span>
             <strong>{{ connection_summary }}</strong>
           </div>
+          <button class="topbar-timeout-block" type="button" id="connection-timeout-open">
+            <span class="meta-label">Timeout</span>
+            <strong class="topbar-timeout-summary">Timeout : {{ connection_timeout_summary }}</strong>
+          </button>
           <form method="post" action="{{ url_for('logout') }}">
             <button class="button secondary" type="submit">Logout</button>
           </form>
@@ -77,6 +81,116 @@
       </main>
     </div>
     {% if logged_in %}
+    <div class="modal-overlay" id="connection-timeout-modal" hidden>
+      <section class="modal-card report-value-modal-card">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">Connection</p>
+            <h3>Edit Timeout Settings</h3>
+          </div>
+          <button class="button secondary" type="button" id="connection-timeout-close">Close</button>
+        </div>
+        <form method="post" action="{{ url_for('update_connection_timeouts') }}" class="form-grid modal-section">
+          <section class="timeout-current-values">
+            <h4>Current Values</h4>
+            <dl class="detail-list detail-list-inline timeout-current-list">
+              <div>
+                <dt><code>connection_timeout</code></dt>
+                <dd>{{ connection_timeout_settings.connection_timeout or "-" }}</dd>
+              </div>
+              <div>
+                <dt><code>net_read_timeout</code></dt>
+                <dd>{{ connection_timeout_settings.read_timeout or "-" }}</dd>
+              </div>
+              <div>
+                <dt><code>net_write_timeout</code></dt>
+                <dd>{{ connection_timeout_settings.write_timeout or "-" }}</dd>
+              </div>
+              <div>
+                <dt><code>max_execution_time</code></dt>
+                <dd>{{ connection_timeout_settings.max_execution_time if connection_timeout_settings.max_execution_time != "" else "-" }}</dd>
+              </div>
+              <div>
+                <dt><code>wait_timeout</code></dt>
+                <dd>{{ connection_timeout_settings.wait_timeout or "-" }}</dd>
+              </div>
+              <div>
+                <dt><code>interactive_timeout</code></dt>
+                <dd>{{ connection_timeout_settings.interactive_timeout or "-" }}</dd>
+              </div>
+            </dl>
+          </section>
+          <label>
+            Connection timeout (seconds)
+            <input
+              name="connection_timeout"
+              type="number"
+              min="1"
+              step="1"
+              value="{{ connection_timeout_settings.connection_timeout }}"
+              placeholder="Connector default"
+            >
+          </label>
+          <label>
+            Session read timeout (seconds)
+            <input
+              name="read_timeout"
+              type="number"
+              min="1"
+              step="1"
+              value="{{ connection_timeout_settings.read_timeout }}"
+            >
+          </label>
+          <label>
+            Session write timeout (seconds)
+            <input
+              name="write_timeout"
+              type="number"
+              min="1"
+              step="1"
+              value="{{ connection_timeout_settings.write_timeout }}"
+            >
+          </label>
+          <label>
+            Session max execution time (ms)
+            <input
+              name="max_execution_time"
+              type="number"
+              min="0"
+              step="1"
+              value="{{ connection_timeout_settings.max_execution_time }}"
+            >
+          </label>
+          <label>
+            Session wait timeout (seconds)
+            <input
+              name="wait_timeout"
+              type="number"
+              min="1"
+              step="1"
+              value="{{ connection_timeout_settings.wait_timeout }}"
+            >
+          </label>
+          <label>
+            Session interactive timeout (seconds)
+            <input
+              name="interactive_timeout"
+              type="number"
+              min="1"
+              step="1"
+              value="{{ connection_timeout_settings.interactive_timeout }}"
+            >
+          </label>
+          <p class="helper-text">
+            Read, write, execution, wait, and interactive timeout values are applied as session settings on each new MySQL connection.
+            Connection timeout is the connector-side connect timeout.
+          </p>
+          <div class="form-actions">
+            <button class="button primary" type="submit">Save Timeout Settings</button>
+          </div>
+        </form>
+      </section>
+    </div>
     <script>
       (() => {
         const storageKey = "hw-nlsql-open-nav-group";
@@ -129,6 +243,34 @@
             const isOpen = group.classList.contains("open");
             setOpenGroup(isOpen ? null : group);
           });
+        });
+      })();
+
+      (() => {
+        const modal = document.getElementById("connection-timeout-modal");
+        const openButton = document.getElementById("connection-timeout-open");
+        const closeButton = document.getElementById("connection-timeout-close");
+        if (!modal || !openButton || !closeButton) {
+          return;
+        }
+
+        const closeModal = () => {
+          modal.hidden = true;
+        };
+
+        openButton.addEventListener("click", () => {
+          modal.hidden = false;
+        });
+        closeButton.addEventListener("click", closeModal);
+        modal.addEventListener("click", (event) => {
+          if (event.target === modal) {
+            closeModal();
+          }
+        });
+        document.addEventListener("keydown", (event) => {
+          if (event.key === "Escape" && !modal.hidden) {
+            closeModal();
+          }
         });
       })();
     </script>

@@ -204,6 +204,15 @@ If you use different OCI names, replace `hw-genai-dg` and `hw-demo-compartment` 
 
 Profiles are stored in `profiles.json`. Only non-secret connection details are stored there.
 
+### Connection Timeout Settings
+
+- `Admin > Connection Profile` and the login page let you store optional timeout values per saved profile.
+- Supported values are connector-side `connection_timeout` plus session values `net_read_timeout`, `net_write_timeout`, `max_execution_time`, `wait_timeout`, and `interactive_timeout`.
+- Leave any timeout field blank to use the MySQL Connector default or the MySQL session default for that setting.
+- The top-right header shows the compact summary as `Timeout : connection/read/write/max_execution`.
+- Clicking the timeout summary opens a popup that shows the current session timeout values by variable name and lets you change them for the active saved profile.
+- Updated profile values are applied to each new MySQL connection opened by the app.
+
 ## Page Notes
 
 ### NL_SQL

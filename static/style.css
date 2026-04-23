@@ -105,6 +105,43 @@ button {
   align-items: center;
 }
 
+.topbar-timeout-block {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  max-width: min(34rem, 100%);
+  text-align: left;
+  cursor: pointer;
+}
+
+.topbar-timeout-block:hover .topbar-timeout-summary,
+.topbar-timeout-block:focus-visible .topbar-timeout-summary {
+  color: var(--accent-dark);
+  text-decoration: underline;
+}
+
+.topbar-timeout-summary {
+  display: block;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.timeout-current-values {
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 253, 249, 0.88);
+}
+
+.timeout-current-values h4 {
+  margin: 0 0 12px;
+}
+
+.timeout-current-list {
+  margin: 0;
+}
+
 .meta-label {
   display: block;
   margin-bottom: 4px;
