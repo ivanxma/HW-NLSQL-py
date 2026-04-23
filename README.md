@@ -200,6 +200,8 @@ If you use different OCI names, replace `hw-genai-dg` and `hw-demo-compartment` 
 5. Open `Admin > Setup Askme` to create database `askme`, initialize table `askme.config`, and save `OCI_REGION`, `OCI_BUCKET_NAME`, `OCI_NAMESPACE`, and `OCI_BUCKET_FOLDER` for AskME object-storage usage.
 6. Use `HeatWave > NL_SQL`, `HeatWave > HWVision`, `HeatWave > GenAI`, `HeatWave > Askme GenAI`, `HeatWave > HeatWave ML`, or `HeatWave > HeatWave Performance`.
 
+If MySQL is restarted and the active session is no longer valid, the next authenticated page load clears that dead session and routes back to the login page.
+
 `HeatWave > Askme GenAI` is shown only after all required `askme.config` values are configured. AskME database access uses the current logged-in MySQL connection; it does not use OCI Vault to look up database credentials.
 
 Profiles are stored in `profiles.json`. Only non-secret connection details are stored there.

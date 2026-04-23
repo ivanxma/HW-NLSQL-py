@@ -620,6 +620,51 @@ def validate_user(user, password):
     return True, ""
 
 
+def _is_public_endpoint(endpoint):
+    return endpoint in {
+        "login",
+        "save_profile_route",
+        "logout",
+        "static",
+    }
+
+
+def _validate_active_session_connection():
+    cnx = None
+    cursor = None
+    try:
+        cnx = mysql_connection(
+            get_connection_config(include_database=bool(get_session_profile()["database"]))
+        )
+        cursor = cnx.cursor()
+        cursor.execute("select 1")
+        cursor.fetchone()
+        return True
+    except mysql.connector.Error:
+        return False
+    finally:
+        if cursor:
+            cursor.close()
+        if cnx and cnx.is_connected():
+            cnx.close()
+
+
+@app.before_request
+def enforce_live_database_session():
+    if not session.get("logged_in"):
+        return None
+    if _is_public_endpoint(request.endpoint):
+        return None
+    if _validate_active_session_connection():
+        return None
+    clear_login_state()
+    flash(
+        "The MySQL connection is no longer available. Log in again after the database is back online.",
+        "warning",
+    )
+    return redirect(url_for("login"))
+
+
 def setup_db():
     exec_sql("create database if not exists nlsql", include_database=False)
     exec_sql(
