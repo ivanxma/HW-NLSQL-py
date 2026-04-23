@@ -28,161 +28,184 @@ IRIS_NON_PK_COLUMNS = [
     "class",
 ]
 
-IRIS_TRAIN_ROWS = [
-    (5.1, 3.5, 1.4, 0.2, "Iris-setosa"),
-    (4.9, 3.0, 1.4, 0.2, "Iris-setosa"),
-    (4.7, 3.2, 1.3, 0.2, "Iris-setosa"),
-    (4.6, 3.1, 1.5, 0.2, "Iris-setosa"),
-    (5.0, 3.6, 1.4, 0.2, "Iris-setosa"),
-    (5.4, 3.9, 1.7, 0.4, "Iris-setosa"),
-    (4.6, 3.4, 1.4, 0.3, "Iris-setosa"),
-    (5.0, 3.4, 1.5, 0.2, "Iris-setosa"),
-    (4.4, 2.9, 1.4, 0.2, "Iris-setosa"),
-    (4.9, 3.1, 1.5, 0.1, "Iris-setosa"),
-    (5.4, 3.7, 1.5, 0.2, "Iris-setosa"),
-    (4.8, 3.4, 1.6, 0.2, "Iris-setosa"),
-    (4.8, 3.0, 1.4, 0.1, "Iris-setosa"),
-    (4.3, 3.0, 1.1, 0.1, "Iris-setosa"),
-    (5.8, 4.0, 1.2, 0.2, "Iris-setosa"),
-    (5.7, 4.4, 1.5, 0.4, "Iris-setosa"),
-    (5.4, 3.9, 1.3, 0.4, "Iris-setosa"),
-    (5.1, 3.5, 1.4, 0.3, "Iris-setosa"),
-    (5.7, 3.8, 1.7, 0.3, "Iris-setosa"),
-    (5.1, 3.8, 1.5, 0.3, "Iris-setosa"),
-    (5.4, 3.4, 1.7, 0.2, "Iris-setosa"),
-    (5.1, 3.7, 1.5, 0.4, "Iris-setosa"),
-    (4.6, 3.6, 1.0, 0.2, "Iris-setosa"),
-    (5.1, 3.3, 1.7, 0.5, "Iris-setosa"),
-    (4.8, 3.4, 1.9, 0.2, "Iris-setosa"),
-    (5.0, 3.0, 1.6, 0.2, "Iris-setosa"),
-    (5.0, 3.4, 1.6, 0.4, "Iris-setosa"),
-    (5.2, 3.5, 1.5, 0.2, "Iris-setosa"),
-    (5.2, 3.4, 1.4, 0.2, "Iris-setosa"),
-    (4.7, 3.2, 1.6, 0.2, "Iris-setosa"),
-    (4.8, 3.1, 1.6, 0.2, "Iris-setosa"),
-    (5.4, 3.4, 1.5, 0.4, "Iris-setosa"),
-    (5.2, 4.1, 1.5, 0.1, "Iris-setosa"),
-    (5.5, 4.2, 1.4, 0.2, "Iris-setosa"),
-    (4.9, 3.1, 1.5, 0.2, "Iris-setosa"),
-    (5.0, 3.2, 1.2, 0.2, "Iris-setosa"),
-    (5.5, 3.5, 1.3, 0.2, "Iris-setosa"),
-    (4.9, 3.1, 1.5, 0.1, "Iris-setosa"),
-    (4.4, 3.0, 1.3, 0.2, "Iris-setosa"),
-    (5.1, 3.4, 1.5, 0.2, "Iris-setosa"),
-    (5.0, 3.5, 1.3, 0.3, "Iris-setosa"),
-    (4.5, 2.3, 1.3, 0.3, "Iris-setosa"),
-    (4.4, 3.2, 1.3, 0.2, "Iris-setosa"),
-    (5.0, 3.5, 1.6, 0.6, "Iris-setosa"),
-    (5.1, 3.8, 1.9, 0.4, "Iris-setosa"),
-    (4.8, 3.0, 1.4, 0.3, "Iris-setosa"),
-    (5.1, 3.8, 1.6, 0.2, "Iris-setosa"),
-    (4.6, 3.2, 1.4, 0.2, "Iris-setosa"),
-    (5.3, 3.7, 1.5, 0.2, "Iris-setosa"),
-    (5.0, 3.3, 1.4, 0.2, "Iris-setosa"),
-    (7.0, 3.2, 4.7, 1.4, "Iris-setosa"),
-    (6.4, 3.2, 4.5, 1.5, "Iris-setosa"),
-    (6.9, 3.1, 4.9, 1.5, "Iris-setosa"),
-    (5.5, 2.3, 4.0, 1.3, "Iris-setosa"),
-    (6.5, 2.8, 4.6, 1.5, "Iris-setosa"),
-    (5.7, 2.8, 4.5, 1.3, "Iris-setosa"),
-    (6.3, 3.3, 4.7, 1.6, "Iris-setosa"),
-    (4.9, 2.4, 3.3, 1.0, "Iris-setosa"),
-    (6.6, 2.9, 4.6, 1.3, "Iris-setosa"),
-    (5.2, 2.7, 3.9, 1.4, "Iris-setosa"),
-    (5.0, 2.0, 3.5, 1.0, "Iris-setosa"),
-    (5.9, 3.0, 4.2, 1.5, "Iris-setosa"),
-    (6.0, 2.2, 4.0, 1.0, "Iris-setosa"),
-    (6.1, 2.9, 4.7, 1.4, "Iris-setosa"),
-    (5.6, 2.9, 3.6, 1.3, "Iris-setosa"),
-    (6.7, 3.1, 4.4, 1.4, "Iris-setosa"),
-    (5.6, 3.0, 4.5, 1.5, "Iris-setosa"),
-    (5.8, 2.7, 4.1, 1.0, "Iris-setosa"),
-    (6.2, 2.2, 4.5, 1.5, "Iris-setosa"),
-    (5.6, 2.5, 3.9, 1.1, "Iris-setosa"),
-    (5.9, 3.2, 4.8, 1.8, "Iris-setosa"),
-    (6.1, 2.8, 4.0, 1.3, "Iris-setosa"),
-    (6.3, 2.5, 4.9, 1.5, "Iris-setosa"),
-    (6.1, 2.8, 4.7, 1.2, "Iris-setosa"),
-    (6.4, 2.9, 4.3, 1.3, "Iris-setosa"),
-    (6.6, 3.0, 4.4, 1.4, "Iris-setosa"),
-    (6.8, 2.8, 4.8, 1.4, "Iris-setosa"),
-    (6.7, 3.0, 5.0, 1.7, "Iris-setosa"),
-    (6.0, 2.9, 4.5, 1.5, "Iris-setosa"),
-    (5.7, 2.6, 3.5, 1.0, "Iris-setosa"),
-    (5.5, 2.4, 3.8, 1.1, "Iris-setosa"),
-    (5.5, 2.4, 3.7, 1.0, "Iris-setosa"),
-    (5.8, 2.7, 3.9, 1.2, "Iris-setosa"),
-    (6.0, 2.7, 5.1, 1.6, "Iris-setosa"),
-    (5.4, 3.0, 4.5, 1.5, "Iris-setosa"),
-    (6.0, 3.4, 4.5, 1.6, "Iris-setosa"),
-    (6.7, 3.1, 4.7, 1.5, "Iris-setosa"),
-    (6.3, 2.3, 4.4, 1.3, "Iris-setosa"),
-    (5.6, 3.0, 4.1, 1.3, "Iris-setosa"),
-    (5.5, 2.5, 4.0, 1.3, "Iris-setosa"),
-    (5.5, 2.6, 4.4, 1.2, "Iris-setosa"),
-    (6.1, 3.0, 4.6, 1.4, "Iris-setosa"),
-    (5.8, 2.6, 4.0, 1.2, "Iris-setosa"),
-    (5.0, 2.3, 3.3, 1.0, "Iris-setosa"),
-    (5.6, 2.7, 4.2, 1.3, "Iris-setosa"),
-    (5.7, 3.0, 4.2, 1.2, "Iris-setosa"),
-    (5.7, 2.9, 4.2, 1.3, "Iris-setosa"),
-    (6.2, 2.9, 4.3, 1.3, "Iris-setosa"),
-    (5.1, 2.5, 3.0, 1.1, "Iris-setosa"),
-    (5.7, 2.8, 4.1, 1.3, "Iris-setosa"),
-    (6.3, 3.3, 6.0, 2.5, "Iris-versicolor"),
-    (5.8, 2.7, 5.1, 1.9, "Iris-versicolor"),
-    (7.1, 3.0, 5.9, 2.1, "Iris-versicolor"),
-    (6.3, 2.9, 5.6, 1.8, "Iris-versicolor"),
-    (6.5, 3.0, 5.8, 2.2, "Iris-versicolor"),
-    (7.6, 3.0, 6.6, 2.1, "Iris-versicolor"),
-    (4.9, 2.5, 4.5, 1.7, "Iris-versicolor"),
-    (7.3, 2.9, 6.3, 1.8, "Iris-versicolor"),
-    (6.7, 2.5, 5.8, 1.8, "Iris-versicolor"),
-    (7.2, 3.6, 6.1, 2.5, "Iris-versicolor"),
-    (6.5, 3.2, 5.1, 2.0, "Iris-versicolor"),
-    (6.4, 2.7, 5.3, 1.9, "Iris-versicolor"),
-    (6.8, 3.0, 5.5, 2.1, "Iris-versicolor"),
-    (5.7, 2.5, 5.0, 2.0, "Iris-versicolor"),
-    (5.8, 2.8, 5.1, 2.4, "Iris-versicolor"),
-    (6.4, 3.2, 5.3, 2.3, "Iris-versicolor"),
-    (6.5, 3.0, 5.5, 1.8, "Iris-versicolor"),
-    (7.7, 3.8, 6.7, 2.2, "Iris-versicolor"),
-    (7.7, 2.6, 6.9, 2.3, "Iris-versicolor"),
-    (6.0, 2.2, 5.0, 1.5, "Iris-versicolor"),
-]
+IRIS_TRAIN_ROWS_RAW = """
+6.4|2.8|5.6|2.2|Iris-virginica
+5.0|2.3|3.3|1.0|Iris-setosa
+4.9|2.5|4.5|1.7|Iris-virginica
+4.9|3.1|1.5|0.1|Iris-versicolor
+5.7|3.8|1.7|0.3|Iris-versicolor
+4.4|3.2|1.3|0.2|Iris-versicolor
+5.4|3.4|1.5|0.4|Iris-versicolor
+6.9|3.1|5.1|2.3|Iris-virginica
+6.7|3.1|4.4|1.4|Iris-setosa
+5.1|3.7|1.5|0.4|Iris-versicolor
+5.2|2.7|3.9|1.4|Iris-setosa
+6.9|3.1|4.9|1.5|Iris-setosa
+5.8|4.0|1.2|0.2|Iris-versicolor
+5.4|3.9|1.7|0.4|Iris-versicolor
+7.7|3.8|6.7|2.2|Iris-virginica
+6.3|3.3|4.7|1.6|Iris-setosa
+6.8|3.2|5.9|2.3|Iris-virginica
+7.6|3.0|6.6|2.1|Iris-virginica
+6.4|3.2|5.3|2.3|Iris-virginica
+5.7|4.4|1.5|0.4|Iris-versicolor
+6.7|3.3|5.7|2.1|Iris-virginica
+6.4|2.8|5.6|2.1|Iris-virginica
+5.4|3.9|1.3|0.4|Iris-versicolor
+6.1|2.6|5.6|1.4|Iris-virginica
+7.2|3.0|5.8|1.6|Iris-virginica
+5.2|3.5|1.5|0.2|Iris-versicolor
+5.8|2.6|4.0|1.2|Iris-setosa
+5.9|3.0|5.1|1.8|Iris-virginica
+5.4|3.0|4.5|1.5|Iris-setosa
+6.7|3.0|5.0|1.7|Iris-setosa
+6.3|2.3|4.4|1.3|Iris-setosa
+5.1|2.5|3.0|1.1|Iris-setosa
+6.4|3.2|4.5|1.5|Iris-setosa
+6.8|3.0|5.5|2.1|Iris-virginica
+6.2|2.8|4.8|1.8|Iris-virginica
+6.9|3.2|5.7|2.3|Iris-virginica
+6.5|3.2|5.1|2.0|Iris-virginica
+5.8|2.8|5.1|2.4|Iris-virginica
+5.1|3.8|1.5|0.3|Iris-versicolor
+4.8|3.0|1.4|0.3|Iris-versicolor
+7.9|3.8|6.4|2.0|Iris-virginica
+5.8|2.7|5.1|1.9|Iris-virginica
+6.7|3.0|5.2|2.3|Iris-virginica
+5.1|3.8|1.9|0.4|Iris-versicolor
+4.7|3.2|1.6|0.2|Iris-versicolor
+6.0|2.2|5.0|1.5|Iris-virginica
+4.8|3.4|1.6|0.2|Iris-versicolor
+7.7|2.6|6.9|2.3|Iris-virginica
+4.6|3.6|1.0|0.2|Iris-versicolor
+7.2|3.2|6.0|1.8|Iris-virginica
+5.0|3.3|1.4|0.2|Iris-versicolor
+6.6|3.0|4.4|1.4|Iris-setosa
+6.1|2.8|4.0|1.3|Iris-setosa
+5.0|3.2|1.2|0.2|Iris-versicolor
+7.0|3.2|4.7|1.4|Iris-setosa
+6.0|3.0|4.8|1.8|Iris-virginica
+7.4|2.8|6.1|1.9|Iris-virginica
+5.8|2.7|5.1|1.9|Iris-virginica
+6.2|3.4|5.4|2.3|Iris-virginica
+5.0|2.0|3.5|1.0|Iris-setosa
+5.6|2.5|3.9|1.1|Iris-setosa
+6.7|3.1|5.6|2.4|Iris-virginica
+6.3|2.5|5.0|1.9|Iris-virginica
+6.4|3.1|5.5|1.8|Iris-virginica
+6.2|2.2|4.5|1.5|Iris-setosa
+7.3|2.9|6.3|1.8|Iris-virginica
+4.4|3.0|1.3|0.2|Iris-versicolor
+7.2|3.6|6.1|2.5|Iris-virginica
+6.5|3.0|5.5|1.8|Iris-virginica
+5.0|3.4|1.5|0.2|Iris-versicolor
+4.7|3.2|1.3|0.2|Iris-versicolor
+6.6|2.9|4.6|1.3|Iris-setosa
+5.5|3.5|1.3|0.2|Iris-versicolor
+7.7|3.0|6.1|2.3|Iris-virginica
+6.1|3.0|4.9|1.8|Iris-virginica
+4.9|3.1|1.5|0.1|Iris-versicolor
+5.5|2.4|3.8|1.1|Iris-setosa
+5.7|2.9|4.2|1.3|Iris-setosa
+6.0|2.9|4.5|1.5|Iris-setosa
+6.4|2.7|5.3|1.9|Iris-virginica
+5.4|3.7|1.5|0.2|Iris-versicolor
+6.1|2.9|4.7|1.4|Iris-setosa
+6.5|2.8|4.6|1.5|Iris-setosa
+5.6|2.7|4.2|1.3|Iris-setosa
+6.3|3.4|5.6|2.4|Iris-virginica
+4.9|3.1|1.5|0.1|Iris-versicolor
+6.8|2.8|4.8|1.4|Iris-setosa
+5.7|2.8|4.5|1.3|Iris-setosa
+6.0|2.7|5.1|1.6|Iris-setosa
+5.0|3.5|1.3|0.3|Iris-versicolor
+6.5|3.0|5.2|2.0|Iris-virginica
+6.1|2.8|4.7|1.2|Iris-setosa
+5.1|3.5|1.4|0.3|Iris-versicolor
+4.6|3.1|1.5|0.2|Iris-versicolor
+6.5|3.0|5.8|2.2|Iris-virginica
+4.6|3.4|1.4|0.3|Iris-versicolor
+4.6|3.2|1.4|0.2|Iris-versicolor
+7.7|2.8|6.7|2.0|Iris-virginica
+5.9|3.2|4.8|1.8|Iris-setosa
+5.1|3.8|1.6|0.2|Iris-versicolor
+4.9|3.0|1.4|0.2|Iris-versicolor
+4.9|2.4|3.3|1.0|Iris-setosa
+4.5|2.3|1.3|0.3|Iris-versicolor
+5.8|2.7|4.1|1.0|Iris-setosa
+5.0|3.4|1.6|0.4|Iris-versicolor
+5.2|3.4|1.4|0.2|Iris-versicolor
+5.3|3.7|1.5|0.2|Iris-versicolor
+5.0|3.6|1.4|0.2|Iris-versicolor
+5.6|2.9|3.6|1.3|Iris-setosa
+4.8|3.1|1.6|0.2|Iris-versicolor
+6.3|2.7|4.9|1.8|Iris-virginica
+5.7|2.8|4.1|1.3|Iris-setosa
+5.0|3.0|1.6|0.2|Iris-versicolor
+6.3|3.3|6.0|2.5|Iris-virginica
+5.0|3.5|1.6|0.6|Iris-versicolor
+5.5|2.6|4.4|1.2|Iris-setosa
+5.7|3.0|4.2|1.2|Iris-setosa
+4.4|2.9|1.4|0.2|Iris-versicolor
+4.8|3.0|1.4|0.1|Iris-versicolor
+5.5|2.4|3.7|1.0|Iris-setosa
+"""
 
-IRIS_TEST_ROWS = [
-    (6.9, 3.2, 5.7, 2.3, "Iris-virginica"),
-    (5.6, 2.8, 4.9, 2.0, "Iris-virginica"),
-    (7.7, 2.8, 6.7, 2.0, "Iris-virginica"),
-    (6.3, 2.7, 4.9, 1.8, "Iris-virginica"),
-    (6.7, 3.3, 5.7, 2.1, "Iris-virginica"),
-    (7.2, 3.2, 6.0, 1.8, "Iris-virginica"),
-    (6.2, 2.8, 4.8, 1.8, "Iris-virginica"),
-    (6.1, 3.0, 4.9, 1.8, "Iris-virginica"),
-    (6.4, 2.8, 5.6, 2.1, "Iris-virginica"),
-    (7.2, 3.0, 5.8, 1.6, "Iris-virginica"),
-    (7.4, 2.8, 6.1, 1.9, "Iris-virginica"),
-    (7.9, 3.8, 6.4, 2.0, "Iris-virginica"),
-    (6.4, 2.8, 5.6, 2.2, "Iris-virginica"),
-    (6.3, 2.8, 5.1, 1.5, "Iris-virginica"),
-    (6.1, 2.6, 5.6, 1.4, "Iris-virginica"),
-    (7.7, 3.0, 6.1, 2.3, "Iris-virginica"),
-    (6.3, 3.4, 5.6, 2.4, "Iris-virginica"),
-    (6.4, 3.1, 5.5, 1.8, "Iris-virginica"),
-    (6.0, 3.0, 4.8, 1.8, "Iris-virginica"),
-    (6.9, 3.1, 5.4, 2.1, "Iris-virginica"),
-    (6.7, 3.1, 5.6, 2.4, "Iris-virginica"),
-    (6.9, 3.1, 5.1, 2.3, "Iris-virginica"),
-    (5.8, 2.7, 5.1, 1.9, "Iris-virginica"),
-    (6.8, 3.2, 5.9, 2.3, "Iris-virginica"),
-    (6.7, 3.3, 5.7, 2.5, "Iris-virginica"),
-    (6.7, 3.0, 5.2, 2.3, "Iris-virginica"),
-    (6.3, 2.5, 5.0, 1.9, "Iris-virginica"),
-    (6.5, 3.0, 5.2, 2.0, "Iris-virginica"),
-    (6.2, 3.4, 5.4, 2.3, "Iris-virginica"),
-    (5.9, 3.0, 5.1, 1.8, "Iris-virginica"),
-]
+IRIS_TEST_ROWS_RAW = """
+5.9|3.0|4.2|1.5|Iris-setosa
+6.9|3.1|5.4|2.1|Iris-virginica
+5.1|3.3|1.7|0.5|Iris-versicolor
+6.0|3.4|4.5|1.6|Iris-setosa
+5.5|2.5|4.0|1.3|Iris-setosa
+6.2|2.9|4.3|1.3|Iris-setosa
+5.5|4.2|1.4|0.2|Iris-versicolor
+6.3|2.8|5.1|1.5|Iris-virginica
+5.6|3.0|4.1|1.3|Iris-setosa
+6.7|2.5|5.8|1.8|Iris-virginica
+7.1|3.0|5.9|2.1|Iris-virginica
+4.3|3.0|1.1|0.1|Iris-versicolor
+5.6|2.8|4.9|2.0|Iris-virginica
+5.5|2.3|4.0|1.3|Iris-setosa
+6.0|2.2|4.0|1.0|Iris-setosa
+5.1|3.5|1.4|0.2|Iris-versicolor
+5.7|2.6|3.5|1.0|Iris-setosa
+4.8|3.4|1.9|0.2|Iris-versicolor
+5.1|3.4|1.5|0.2|Iris-versicolor
+5.7|2.5|5.0|2.0|Iris-virginica
+5.4|3.4|1.7|0.2|Iris-versicolor
+5.6|3.0|4.5|1.5|Iris-setosa
+6.3|2.9|5.6|1.8|Iris-virginica
+6.3|2.5|4.9|1.5|Iris-setosa
+5.8|2.7|3.9|1.2|Iris-setosa
+6.1|3.0|4.6|1.4|Iris-setosa
+5.2|4.1|1.5|0.1|Iris-versicolor
+6.7|3.1|4.7|1.5|Iris-setosa
+6.7|3.3|5.7|2.5|Iris-virginica
+6.4|2.9|4.3|1.3|Iris-setosa
+"""
+
+
+def _parse_iris_rows(raw_text):
+    rows = []
+    for line in str(raw_text or "").strip().splitlines():
+        normalized = line.strip()
+        if not normalized:
+            continue
+        sepal_length, sepal_width, petal_length, petal_width, iris_class = normalized.split("|", 4)
+        rows.append(
+            (
+                float(sepal_length),
+                float(sepal_width),
+                float(petal_length),
+                float(petal_width),
+                iris_class,
+            )
+        )
+    return rows
+
+
+IRIS_TRAIN_ROWS = _parse_iris_rows(IRIS_TRAIN_ROWS_RAW)
+IRIS_TEST_ROWS = _parse_iris_rows(IRIS_TEST_ROWS_RAW)
 
 IRIS_DOCS_URL = "https://dev.mysql.com/doc/heatwave/en/mys-hwaml-iris-quickstart.html"
 IRIS_ML_TRAIN_CALL_TEXT = (
@@ -729,26 +752,21 @@ def _initialize_iris_database():
     cnx = None
     cursor = None
     ml_schema_name = _ml_schema_name()
+    cleared_model_catalog = bool(ml_schema_name and _model_catalog_exists(ml_schema_name))
     try:
         cnx = mysql_connection(get_connection_config(include_database=False))
         cursor = cnx.cursor()
-        if ml_schema_name and _model_catalog_exists(ml_schema_name):
-            cursor.execute(
-                "delete from {}.MODEL_CATALOG where model_handle = 'iris_model'".format(
-                    _quote_identifier(ml_schema_name)
-                )
-            )
         cursor.execute("drop database if exists ml_data")
         cursor.execute("create database ml_data")
         cursor.execute(
             """
             create table ml_data.iris_train (
-                `my_row_id` bigint unsigned not null auto_increment primary key,
+                `my_row_id` bigint not null auto_increment invisible primary key,
                 `sepal length` float default null,
                 `sepal width` float default null,
                 `petal length` float default null,
                 `petal width` float default null,
-                `class` varchar(32) default null
+                `class` varchar(16) default null
             )
             """
         )
@@ -764,6 +782,19 @@ def _initialize_iris_database():
             from ml_data.iris_test
             """
         )
+        for table_name in ("iris_train", "iris_test", "iris_validate"):
+            cursor.execute(
+                "alter table ml_data.{} modify column my_row_id bigint not null auto_increment".format(
+                    _quote_identifier(table_name)
+                )
+            )
+        cursor.execute("set @model = 'iris_model'")
+        if cleared_model_catalog:
+            cursor.execute(
+                "delete from {}.MODEL_CATALOG where model_handle = 'iris_model'".format(
+                    _quote_identifier(ml_schema_name)
+                )
+            )
         cnx.commit()
         finished_at = datetime.now(timezone.utc)
         return {
@@ -773,7 +804,7 @@ def _initialize_iris_database():
             "train_rows": len(IRIS_TRAIN_ROWS),
             "test_rows": len(IRIS_TEST_ROWS),
             "validate_rows": len(IRIS_TEST_ROWS),
-            "cleared_model_catalog": bool(ml_schema_name and _model_catalog_exists(ml_schema_name)),
+            "cleared_model_catalog": cleared_model_catalog,
         }
     except mysql.connector.Error:
         if cnx:

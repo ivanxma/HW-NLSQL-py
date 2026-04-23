@@ -254,7 +254,7 @@ Profiles are stored in `profiles.json`. Only non-secret connection details are s
 
 - The page includes an `Iris` tab and an `NL2ML` tab.
 - The `Iris` tab initializes `ml_data.iris_train`, `ml_data.iris_test`, and `ml_data.iris_validate`.
-- `Initialize IrisDB` recreates schema `ml_data` and clears `ML_SCHEMA_<user>.MODEL_CATALOG` for `iris_model` before loading the demo tables.
+- `Initialize IrisDB` recreates schema `ml_data`, loads the Iris demo split used by the page, makes `my_row_id` visible after load, and clears `ML_SCHEMA_<user>.MODEL_CATALOG` for `iris_model`.
 - Action buttons show the SQL or procedure syntax in the info row before the request is submitted, then append timing after the request finishes.
 - `Execute ML_TRAIN` runs `CALL sys.ML_TRAIN('ml_data.iris_train', 'class', JSON_OBJECT('task', 'classification', 'exclude_column_list', JSON_ARRAY('my_row_id')), @model);`.
 - `Execute ML_MODEL_LOAD` runs `CALL sys.ML_MODEL_LOAD("iris_model", NULL);`.
