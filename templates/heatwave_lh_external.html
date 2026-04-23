@@ -61,94 +61,141 @@
         </label>
       </div>
 
-      <section class="split-layout lakehouse-oci-layout full-width-field">
-        <article class="panel">
-          <h4>Object Storage</h4>
-          <p class="helper-text">Upload a file into an existing folder or enter a new folder name. Folder loading is deferred until requested.</p>
-          <div class="field-grid">
-            <label>
-              Object Folder
-              <select
-                name="selected_object_folder"
-                id="heatwave-lh-folder-select"
-                data-bucket-name="{{ object_storage_setup.bucket_name or '' }}"
-                data-namespace-name="{{ object_storage_setup.namespace_name or '' }}"
-              >
-                <option value="">Select folder</option>
-                {% for folder_name in object_folder_options %}
-                <option value="{{ folder_name }}" {% if form_state.selected_object_folder == folder_name %}selected{% endif %}>{{ folder_name }}</option>
-                {% endfor %}
-              </select>
-            </label>
-
-            <label>
-              New Folder
-              <input type="text" name="new_object_folder" id="heatwave-lh-new-folder" value="{{ form_state.new_object_folder }}" placeholder="folder/subfolder">
-            </label>
-
-            <label>
-              Upload File
-              <input type="file" name="object_file">
-            </label>
-          </div>
-          <div class="inline-form">
-            <button
-              class="button secondary"
-              type="submit"
-              name="lh_external_action"
-              value="load_folders"
-              formnovalidate
-              {% if not object_storage_setup_ready %}disabled{% endif %}
-            >
-              Load Folders
-            </button>
-            <button
-              class="button primary"
-              type="submit"
-              name="lh_external_action"
-              value="upload_file"
-              formnovalidate
-              {% if not object_storage_setup_ready %}disabled{% endif %}
-            >
-              Upload File
-            </button>
-          </div>
-          {% if not object_folders_loaded %}
-          <p class="helper-text compact-helper">The page opens first. Click <code>Load Folders</code> only when you need the OCI Object Storage folder list.</p>
-          {% endif %}
-        </article>
-
-        <article class="panel">
-          <h4>OCI URL</h4>
-          <p class="helper-text">Uploading a file fills this URL with the uploaded object path. You can also edit the OCI URL directly or use file patterns.</p>
-          <label class="full-width-field">
+      <section class="panel full-width-field">
+        <div class="tab-strip result-tab-strip" role="tablist" aria-label="HeatWave LH object storage tabs">
+          <button
+            class="tab-link result-tab-link active"
+            type="button"
+            data-result-group="heatwave-lh-source-tabs"
+            data-result-tab="heatwave-lh-oci-url"
+            aria-selected="true"
+          >
             OCI URL
-            <input
-              type="text"
-              id="heatwave-lh-oci-uri"
-              name="oci_uri"
-              value="{{ form_state.oci_uri }}"
-              placeholder="oci://&lt;bucketname&gt;@&lt;mynamespace&gt;/&lt;folder&gt;/&lt;file pattern&gt;"
-              required
-            >
-          </label>
+          </button>
+          <button
+            class="tab-link result-tab-link"
+            type="button"
+            data-result-group="heatwave-lh-source-tabs"
+            data-result-tab="heatwave-lh-object-upload"
+            aria-selected="false"
+          >
+            Object Storage Upload
+          </button>
+        </div>
 
-          <div class="field-row field-row-two">
-            <label>
-              Format
-              <select name="file_format" required>
-                {% for file_format in supported_formats %}
-                <option value="{{ file_format }}" {% if form_state.file_format == file_format %}selected{% endif %}>{{ file_format }}</option>
-                {% endfor %}
-              </select>
-            </label>
+        <section
+          class="result-tab-panel"
+          data-result-group-panel="heatwave-lh-source-tabs"
+          data-result-panel="heatwave-lh-oci-url"
+        >
+          <div class="split-layout lakehouse-oci-layout">
+            <article class="panel">
+              <h4>OCI URL</h4>
+              <p class="helper-text">Bucket, namespace, region, and base folder are configured in <code>Admin &gt; Setup ObjectStorage</code>.</p>
+              <div class="field-grid">
+                <div class="field-row field-row-two">
+                  <label>
+                    Object Folder
+                    <select
+                      name="selected_object_folder"
+                      id="heatwave-lh-folder-select"
+                      data-bucket-name="{{ object_storage_setup.bucket_name or '' }}"
+                      data-namespace-name="{{ object_storage_setup.namespace_name or '' }}"
+                    >
+                      <option value="">Select folder</option>
+                      {% for folder_name in object_folder_options %}
+                      <option value="{{ folder_name }}" {% if form_state.selected_object_folder == folder_name %}selected{% endif %}>{{ folder_name }}</option>
+                      {% endfor %}
+                    </select>
+                  </label>
 
-            <label class="checkbox-field field-checkbox-cell">
-              <input type="checkbox" name="has_header" value="1" {% if form_state.has_header %}checked{% endif %}>
-              <span>Header row</span>
-            </label>
+                  <div class="field-actions-inline">
+                    <button
+                      class="button secondary"
+                      type="submit"
+                      name="lh_external_action"
+                      value="load_folders"
+                      formnovalidate
+                      {% if not object_storage_setup_ready %}disabled{% endif %}
+                    >
+                      Populate
+                    </button>
+                  </div>
+                </div>
+
+                {% if not object_folders_loaded %}
+                <p class="helper-text compact-helper">The page opens first. Click <code>Populate</code> only when you need the OCI Object Storage folder list.</p>
+                {% endif %}
+
+                <label class="full-width-field">
+                  OCI URL
+                  <input
+                    type="text"
+                    id="heatwave-lh-oci-uri"
+                    name="oci_uri"
+                    value="{{ form_state.oci_uri }}"
+                    placeholder="oci://&lt;bucketname&gt;@&lt;mynamespace&gt;/&lt;folder&gt;/&lt;file pattern&gt;"
+                    required
+                  >
+                </label>
+
+                <div class="field-row field-row-two">
+                  <label>
+                    Format
+                    <select name="file_format" required>
+                      {% for file_format in supported_formats %}
+                      <option value="{{ file_format }}" {% if form_state.file_format == file_format %}selected{% endif %}>{{ file_format }}</option>
+                      {% endfor %}
+                    </select>
+                  </label>
+
+                  <label class="checkbox-field field-checkbox-cell">
+                    <input type="checkbox" name="has_header" value="1" {% if form_state.has_header %}checked{% endif %}>
+                    <span>Header row</span>
+                  </label>
+                </div>
+              </div>
+            </article>
           </div>
-        </article>
+        </section>
+
+        <section
+          class="result-tab-panel"
+          data-result-group-panel="heatwave-lh-source-tabs"
+          data-result-panel="heatwave-lh-object-upload"
+          hidden
+        >
+          <div class="split-layout lakehouse-oci-layout">
+            <article class="panel">
+              <h4>Object Storage Upload</h4>
+              <p class="helper-text">Upload a file into an existing folder or enter a new folder name. Uploading a file fills the OCI URL with the uploaded object path.</p>
+              <p class="helper-text">Bucket, namespace, region, and base folder are configured in <code>Admin &gt; Setup ObjectStorage</code>.</p>
+              <div class="field-grid">
+                <label>
+                  New Folder
+                  <input type="text" name="new_object_folder" id="heatwave-lh-new-folder" value="{{ form_state.new_object_folder }}" placeholder="folder/subfolder">
+                </label>
+
+                <label>
+                  Upload File
+                  <input type="file" name="object_file">
+                </label>
+              </div>
+              <div class="inline-form">
+                <button
+                  class="button primary"
+                  type="submit"
+                  name="lh_external_action"
+                  value="upload_file"
+                  formnovalidate
+                  {% if not object_storage_setup_ready %}disabled{% endif %}
+                >
+                  Upload File
+                </button>
+              </div>
+            </article>
+          </div>
+        </section>
       </section>
 
       <section class="option-group full-width-field">
