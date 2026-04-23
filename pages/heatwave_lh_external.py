@@ -187,7 +187,6 @@ def _list_object_storage_folders(config_values):
     namespace_name = _normalize_text(config_values.get("namespace_name"))
     bucket_name = _normalize_text(config_values.get("bucket_name"))
     configured_prefix = _normalize_text(config_values.get("base_folder")).strip("/")
-    prefix_filter = "{}/".format(configured_prefix) if configured_prefix else ""
     object_names = []
     start_value = None
     try:
@@ -195,7 +194,6 @@ def _list_object_storage_folders(config_values):
             response = client.list_objects(
                 namespace_name=namespace_name,
                 bucket_name=bucket_name,
-                prefix=prefix_filter or None,
                 start=start_value,
                 fields="name",
             )

@@ -97,6 +97,7 @@
               type="submit"
               name="lh_external_action"
               value="load_folders"
+              formnovalidate
               {% if not object_storage_setup_ready %}disabled{% endif %}
             >
               Load Folders
@@ -106,6 +107,7 @@
               type="submit"
               name="lh_external_action"
               value="upload_file"
+              formnovalidate
               {% if not object_storage_setup_ready %}disabled{% endif %}
             >
               Upload File
