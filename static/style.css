@@ -213,9 +213,21 @@ button {
   color: var(--muted);
 }
 
+.nav-link.disabled {
+  color: #9b948b;
+  background: rgba(214, 209, 202, 0.55);
+  cursor: not-allowed;
+}
+
 .nav-link.active {
   background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dark) 100%);
   color: white;
+}
+
+.field-actions-inline {
+  display: grid;
+  align-content: end;
+  gap: 8px;
 }
 
 .tab-shell {

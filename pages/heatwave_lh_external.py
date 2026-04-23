@@ -1,4 +1,5 @@
 import json
+import importlib
 import time
 from datetime import datetime, timezone
 
@@ -12,11 +13,13 @@ from app_context import (
     _validate_identifier,
     app,
     exec_sql,
+    fetch_askme_config,
     login_required,
     render_dashboard,
     run_sql,
     run_sql_multi_resultsets,
     run_sql_with_columns,
+    setup_askme_db,
 )
 
 HEATWAVE_LH_EXTERNAL_TABS = [
@@ -48,6 +51,7 @@ def _default_lh_external_form():
     return {
         "database_name": "",
         "table_name": "",
+        "selected_object_folder": "",
         "oci_uri": "",
         "file_format": "csv",
         "has_header": True,
@@ -76,6 +80,7 @@ def _load_lh_external_form(source):
         return form
     form["database_name"] = str(source.get("database_name", "")).strip()
     form["table_name"] = str(source.get("table_name", "")).strip()
+    form["selected_object_folder"] = str(source.get("selected_object_folder", "")).strip().strip("/")
     form["oci_uri"] = str(source.get("oci_uri", "")).strip()
     file_format = str(source.get("file_format", form["file_format"])).strip().lower()
     form["file_format"] = file_format if file_format in HEATWAVE_LH_EXTERNAL_FORMATS else form["file_format"]
@@ -111,6 +116,130 @@ def _load_lh_external_form(source):
     has_header_value = source.get("has_header", "")
     form["has_header"] = str(has_header_value).strip().lower() in {"1", "true", "yes", "on"}
     return form
+
+
+def _normalize_text(value):
+    return str(value or "").strip()
+
+
+def _fetch_object_storage_setup():
+    try:
+        setup_askme_db()
+        config_values = fetch_askme_config()
+    except mysql.connector.Error:
+        return {}
+    return {
+        "region": _normalize_text(config_values.get("OCI_REGION")),
+        "bucket_name": _normalize_text(config_values.get("OCI_BUCKET_NAME")),
+        "namespace_name": _normalize_text(config_values.get("OCI_NAMESPACE")),
+        "base_folder": _normalize_text(config_values.get("OCI_BUCKET_FOLDER")).strip("/"),
+    }
+
+
+def _object_storage_setup_is_ready(config_values):
+    return bool(
+        _normalize_text(config_values.get("region"))
+        and _normalize_text(config_values.get("bucket_name"))
+        and _normalize_text(config_values.get("namespace_name"))
+    )
+
+
+def _import_oci():
+    try:
+        return importlib.import_module("oci")
+    except Exception as error:
+        raise RuntimeError("The OCI SDK is not available. Install the project requirements first.") from error
+
+
+def _get_object_storage_client(config_values):
+    oci = _import_oci()
+    try:
+        signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
+        return oci.object_storage.ObjectStorageClient(
+            config={"region": _normalize_text(config_values.get("region"))},
+            signer=signer,
+            retry_strategy=oci.retry.NoneRetryStrategy(),
+            timeout=(30, 180),
+        )
+    except Exception as error:
+        raise RuntimeError(
+            "OCI instance-principal authentication is unavailable for the configured object storage setup."
+        ) from error
+
+
+def _build_object_storage_base_uri(config_values, folder_name=""):
+    bucket_name = _normalize_text(config_values.get("bucket_name"))
+    namespace_name = _normalize_text(config_values.get("namespace_name"))
+    folder_value = _normalize_text(folder_name).strip("/")
+    if not bucket_name or not namespace_name:
+        return ""
+    if folder_value:
+        return "oci://{}@{}/{}/".format(bucket_name, namespace_name, folder_value)
+    return "oci://{}@{}/".format(bucket_name, namespace_name)
+
+
+def _list_object_storage_folders(config_values):
+    if not _object_storage_setup_is_ready(config_values):
+        return [], ""
+    client = _get_object_storage_client(config_values)
+    namespace_name = _normalize_text(config_values.get("namespace_name"))
+    bucket_name = _normalize_text(config_values.get("bucket_name"))
+    configured_prefix = _normalize_text(config_values.get("base_folder")).strip("/")
+    prefix_filter = "{}/".format(configured_prefix) if configured_prefix else ""
+    object_names = []
+    start_value = None
+    try:
+        while True:
+            response = client.list_objects(
+                namespace_name=namespace_name,
+                bucket_name=bucket_name,
+                prefix=prefix_filter or None,
+                start=start_value,
+                fields="name",
+            )
+            object_names.extend(str(item.name or "") for item in getattr(response.data, "objects", []))
+            start_value = getattr(response.data, "next_start_with", None)
+            if not start_value:
+                break
+    except Exception as error:
+        raise RuntimeError(
+            "Listing object-storage folders failed. Verify the Setup ObjectStorage values and OCI access."
+        ) from error
+
+    folder_names = set()
+    if configured_prefix:
+        folder_names.add(configured_prefix)
+    for object_name in object_names:
+        normalized_name = str(object_name or "").strip().strip("/")
+        if "/" not in normalized_name:
+            continue
+        folder_names.add(normalized_name.rsplit("/", 1)[0])
+    return sorted(folder_names), ""
+
+
+def _resolve_selected_object_folder(form_state, config_values, folder_options):
+    selected_folder = _normalize_text(form_state.get("selected_object_folder")).strip("/")
+    if selected_folder:
+        return selected_folder
+    oci_uri = _normalize_text(form_state.get("oci_uri"))
+    base_uri = _build_object_storage_base_uri(config_values, "")
+    if base_uri and oci_uri.startswith(base_uri):
+        uri_path = oci_uri[len(base_uri):].strip("/")
+        ordered_options = sorted(folder_options, key=len, reverse=True)
+        for folder_option in ordered_options:
+            if uri_path == folder_option or uri_path.startswith(folder_option + "/"):
+                return folder_option
+    configured_prefix = _normalize_text(config_values.get("base_folder")).strip("/")
+    if configured_prefix:
+        return configured_prefix
+    return folder_options[0] if folder_options else ""
+
+
+def _apply_object_storage_defaults(form_state, config_values, folder_options):
+    selected_folder = _resolve_selected_object_folder(form_state, config_values, folder_options)
+    form_state["selected_object_folder"] = selected_folder
+    if not _normalize_text(form_state.get("oci_uri")) and _object_storage_setup_is_ready(config_values):
+        form_state["oci_uri"] = _build_object_storage_base_uri(config_values, selected_folder)
 
 
 def _fetch_target_databases():
@@ -373,8 +502,27 @@ def heatwave_lh_external_page():
     result_sets = []
     execution_timing = None
     form_state = _load_lh_external_form(request.form if request.method == "POST" else request.args)
+    object_storage_setup = {}
+    object_folder_options = []
+    object_storage_error = ""
+    object_folders_loaded = False
 
     try:
+        object_storage_setup = _fetch_object_storage_setup()
+        heatwave_load_action = ""
+        if request.method == "POST" and active_tab == "heatwave-load":
+            heatwave_load_action = request.form.get("lh_external_action", "").strip().lower()
+        if _object_storage_setup_is_ready(object_storage_setup) and heatwave_load_action == "load_folders":
+            try:
+                object_folder_options, _unused = _list_object_storage_folders(object_storage_setup)
+                object_folders_loaded = True
+            except RuntimeError as error:
+                object_storage_error = str(error)
+                flash(object_storage_error, "warning")
+        _apply_object_storage_defaults(form_state, object_storage_setup, object_folder_options)
+        if form_state["selected_object_folder"] and form_state["selected_object_folder"] not in object_folder_options:
+            object_folder_options = [form_state["selected_object_folder"]] + object_folder_options
+
         database_names = _fetch_target_databases()
         lakehouse_databases = _fetch_lakehouse_databases()
         if not form_state["database_name"] and database_names:
@@ -395,10 +543,20 @@ def heatwave_lh_external_page():
 
         if request.method == "POST":
             if active_tab == "heatwave-load":
-                action = request.form.get("lh_external_action", "").strip().lower()
-                _validate_lh_external_form(form_state, database_names)
-                generated_sql = _build_heatwave_load_sql(form_state)
-                form_state["sql_text"] = generated_sql
+                action = heatwave_load_action
+                if action == "load_folders":
+                    if object_storage_error:
+                        pass
+                    elif not _object_storage_setup_is_ready(object_storage_setup):
+                        flash("Configure Admin > Setup ObjectStorage before loading bucket folders.", "warning")
+                    elif object_folder_options:
+                        flash("Loaded object storage folders.", "info")
+                    else:
+                        flash("No object folders were found in the configured bucket path.", "info")
+                else:
+                    _validate_lh_external_form(form_state, database_names)
+                    generated_sql = _build_heatwave_load_sql(form_state)
+                    form_state["sql_text"] = generated_sql
 
                 if action == "execute_sql":
                     sql_text = request.form.get("sql_text", "").strip() or generated_sql
@@ -491,6 +649,11 @@ def heatwave_lh_external_page():
         compression_values=HEATWAVE_COMPRESSION_OPTIONS,
         database_names=database_names,
         form_state=form_state,
+        object_storage_setup=object_storage_setup,
+        object_folder_options=object_folder_options,
+        object_folders_loaded=object_folders_loaded,
+        object_storage_setup_ready=_object_storage_setup_is_ready(object_storage_setup),
+        object_storage_error=object_storage_error,
         result_sets=result_sets,
         execution_timing=execution_timing,
         lakehouse_databases=lakehouse_databases,

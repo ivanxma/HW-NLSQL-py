@@ -53,12 +53,22 @@
           </button>
           <div class="nav-links" id="{{ group_id }}" data-nav-links hidden>
             {% for item in group["items"] %}
+            {% if item.get("disabled") %}
+            <span
+              class="nav-link disabled"
+              title="{{ item.get('disabled_reason', '') }}"
+              aria-disabled="true"
+            >
+              {{ item["label"] }}
+            </span>
+            {% else %}
             <a
               href="{{ url_for(item["endpoint"]) }}"
               class="nav-link {% if current_endpoint == item["endpoint"] %}active{% endif %}"
             >
               {{ item["label"] }}
             </a>
+            {% endif %}
             {% endfor %}
           </div>
         </section>

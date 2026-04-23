@@ -86,7 +86,7 @@ NAV_GROUPS = [
             {"endpoint": "db_admin_page", "label": "DB Admin"},
             {"endpoint": "import_page", "label": "Import"},
             {"endpoint": "setup_configdb_page", "label": "Setup configdb"},
-            {"endpoint": "setup_askme_page", "label": "Setup Askme"},
+            {"endpoint": "setup_askme_page", "label": "Setup ObjectStorage"},
         ],
     },
     {
@@ -2672,20 +2672,22 @@ def airportdb_exists(*, autocommit=False):
 def build_nav_groups():
     groups = []
     show_performance = False
-    show_askme_genai = False
+    object_storage_ready = False
     if session.get("logged_in"):
         try:
             show_performance = airportdb_exists()
         except mysql.connector.Error:
             show_performance = False
-        show_askme_genai = askme_setup_is_ready()
+        object_storage_ready = askme_setup_is_ready()
 
     for group in NAV_GROUPS:
         items = []
         for item in group["items"]:
-            if item["endpoint"] == "askme_genai_page" and not show_askme_genai:
-                continue
-            items.append(dict(item))
+            item_payload = dict(item)
+            if item["endpoint"] in {"askme_genai_page", "heatwave_lh_external_page"} and not object_storage_ready:
+                item_payload["disabled"] = True
+                item_payload["disabled_reason"] = "Configure Admin > Setup ObjectStorage first."
+            items.append(item_payload)
         if group["label"] == "HeatWave" and show_performance:
             items.append(
                 {

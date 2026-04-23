@@ -205,7 +205,7 @@ def _require_askme_config(config_values):
     status = _get_askme_config_status(config_values)
     if status["missing_keys"]:
         raise ValueError(
-            "Configure {} in Admin > Setup Askme before using Askme GenAI.".format(
+            "Configure {} in Admin > Setup ObjectStorage before using Askme GenAI.".format(
                 ", ".join(status["missing_keys"])
             )
         )

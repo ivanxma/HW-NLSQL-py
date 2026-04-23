@@ -24,7 +24,7 @@ def setup_askme_page():
                 for env_var, _default_value in ASKME_CONFIG_ROWS
             }
             save_askme_config(submitted)
-            flash("Updated askme.config.", "success")
+            flash("Updated object storage settings in askme.config.", "success")
             return redirect(url_for("setup_askme_page"))
         config_values = fetch_askme_config()
     except mysql.connector.Error as error:
@@ -41,6 +41,6 @@ def setup_askme_page():
 
     return render_dashboard(
         "setup_askme.html",
-        page_title="Setup Askme",
+        page_title="Setup ObjectStorage",
         config_items=config_items,
     )

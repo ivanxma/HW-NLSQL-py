@@ -16,6 +16,7 @@ SYSTEMD_SUPPORTED=1
 OS_ID=""
 OS_VERSION_ID=""
 OS_VERSION_MAJOR=""
+PYTHON_BIN=""
 
 systemd_available() {
   command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]
@@ -58,17 +59,17 @@ install_ubuntu_packages() {
     printf 'iptables-persistent iptables-persistent/autosave_v4 boolean true\n' | debconf-set-selections
     printf 'iptables-persistent iptables-persistent/autosave_v6 boolean true\n' | debconf-set-selections
   fi
-  apt-get install -y python3 python3-venv python3-full openssl iptables-persistent
+  apt-get install -y openssl iptables-persistent software-properties-common ca-certificates
 }
 
 install_ol8_packages() {
   require_command dnf
-  dnf install -y python3 python3-pip python3-setuptools python3-wheel openssl
+  dnf install -y openssl
 }
 
 install_ol9_packages() {
   require_command dnf
-  dnf install -y python3 python3-pip python3-setuptools python3-pip-wheel openssl
+  dnf install -y openssl
 }
 
 install_os_packages() {
@@ -97,6 +98,91 @@ install_os_packages() {
       exit 1
       ;;
   esac
+}
+
+python_version_at_least() {
+  local command_name="$1"
+  local major="${2:-3}"
+  local minor="${3:-12}"
+
+  if ! command -v "${command_name}" >/dev/null 2>&1; then
+    return 1
+  fi
+
+  "${command_name}" -c "import sys; raise SystemExit(0 if sys.version_info >= (${major}, ${minor}) else 1)"
+}
+
+install_ubuntu_python312() {
+  require_command apt-get
+  export DEBIAN_FRONTEND=noninteractive
+  if ! apt-cache show python3.12 >/dev/null 2>&1; then
+    if ! command -v add-apt-repository >/dev/null 2>&1; then
+      apt-get install -y software-properties-common
+    fi
+    add-apt-repository -y ppa:deadsnakes/ppa
+    apt-get update
+  fi
+  apt-get install -y python3.12 python3.12-venv
+}
+
+install_ol8_python312() {
+  require_command dnf
+  dnf install -y python3.12
+}
+
+install_ol9_python312() {
+  require_command dnf
+  dnf install -y python3.12
+}
+
+ensure_python_runtime() {
+  if python_version_at_least python3 3 12; then
+    PYTHON_BIN="$(command -v python3)"
+    echo "Using existing Python interpreter: ${PYTHON_BIN}"
+    return
+  fi
+
+  if python_version_at_least python3.12 3 12; then
+    PYTHON_BIN="$(command -v python3.12)"
+    echo "Using existing Python interpreter: ${PYTHON_BIN}"
+    return
+  fi
+
+  echo "Python 3.12+ not found. Installing Python 3.12."
+  case "${OS_ID}" in
+    ubuntu)
+      install_ubuntu_python312
+      ;;
+    ol|oracle|oraclelinux)
+      case "${OS_VERSION_MAJOR}" in
+        8)
+          install_ol8_python312
+          ;;
+        9)
+          install_ol9_python312
+          ;;
+        *)
+          echo "Unsupported Oracle Linux version for Python 3.12 installation: ${OS_VERSION_ID}." >&2
+          exit 1
+          ;;
+      esac
+      ;;
+    *)
+      echo "Unsupported operating system for Python 3.12 installation: ${OS_ID} ${OS_VERSION_ID}." >&2
+      exit 1
+      ;;
+  esac
+
+  if python_version_at_least python3.12 3 12; then
+    PYTHON_BIN="$(command -v python3.12)"
+  elif python_version_at_least python3 3 12; then
+    PYTHON_BIN="$(command -v python3)"
+  else
+    echo "Python 3.12 installation completed, but no Python 3.12+ interpreter was found." >&2
+    exit 1
+  fi
+
+  echo "Using Python interpreter: ${PYTHON_BIN}"
 }
 
 install_mysql_shell_innovation() {
@@ -136,7 +222,11 @@ install_mysql_shell_innovation() {
 }
 
 install_python_environment() {
-  python3 -m venv "${VENV_DIR}"
+  if [[ -z "${PYTHON_BIN}" ]]; then
+    echo "PYTHON_BIN is not set. Run ensure_python_runtime first." >&2
+    exit 1
+  fi
+  "${PYTHON_BIN}" -m venv "${VENV_DIR}"
   "${VENV_DIR}/bin/python" -m pip install --upgrade pip setuptools wheel
   "${VENV_DIR}/bin/python" -m pip install -r "${ROOT_DIR}/requirements.txt"
 }
@@ -268,8 +358,8 @@ configure_host_access() {
 main() {
   run_as_root "$@"
   install_os_packages
+  ensure_python_runtime
   install_mysql_shell_innovation
-  require_command python3
   install_python_environment
   prepare_runtime_files
   if [[ "${SKIP_SYSTEMD}" == "1" ]]; then

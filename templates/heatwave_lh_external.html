@@ -27,6 +27,18 @@
     {% if active_tab == "heatwave-load" %}
     <h3>HeatWave_load</h3>
     <p class="helper-text">Target table must not already exist in the selected database.</p>
+    {% if object_storage_setup_ready %}
+    <p class="helper-text">
+      Setup ObjectStorage:
+      <code>{{ object_storage_setup.bucket_name or "-" }}</code> /
+      <code>{{ object_storage_setup.namespace_name or "-" }}</code> /
+      <code>{{ object_storage_setup.base_folder or "-" }}</code>
+    </p>
+    {% elif object_storage_error %}
+    <p class="helper-text">{{ object_storage_error }}</p>
+    {% else %}
+    <p class="helper-text">Configure <code>Admin &gt; Setup ObjectStorage</code> to default the OCI URL from the configured bucket, namespace, and folder.</p>
+    {% endif %}
     {% if not database_names %}
     <p class="helper-text">No non-system databases are available for HeatWave load targets.</p>
     {% endif %}
@@ -50,10 +62,41 @@
       </div>
 
       <div class="field-row field-row-uri full-width-field">
+        <label>
+          Object Folder
+          <select
+            name="selected_object_folder"
+            id="heatwave-lh-folder-select"
+            data-bucket-name="{{ object_storage_setup.bucket_name or '' }}"
+            data-namespace-name="{{ object_storage_setup.namespace_name or '' }}"
+          >
+            <option value="">Select folder</option>
+            {% for folder_name in object_folder_options %}
+            <option value="{{ folder_name }}" {% if form_state.selected_object_folder == folder_name %}selected{% endif %}>{{ folder_name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+
+        <div class="field-actions-inline">
+          <button
+            class="button secondary"
+            type="submit"
+            name="lh_external_action"
+            value="load_folders"
+            {% if not object_storage_setup_ready %}disabled{% endif %}
+          >
+            Load Folders
+          </button>
+          {% if not object_folders_loaded %}
+          <p class="helper-text compact-helper">Deferred load. The page opens first; load the bucket folders only when needed.</p>
+          {% endif %}
+        </div>
+
         <label class="field-span-wide">
           OCI URL
           <input
             type="text"
+            id="heatwave-lh-oci-uri"
             name="oci_uri"
             value="{{ form_state.oci_uri }}"
             placeholder="oci://&lt;bucketname&gt;@&lt;mynamespace&gt;/&lt;folder&gt;/&lt;file pattern&gt;"
@@ -533,6 +576,8 @@
   (() => {
     const form = document.getElementById("heatwave-lh-external-form");
     const status = document.getElementById("heatwave-lh-external-run-status");
+    const folderSelect = document.getElementById("heatwave-lh-folder-select");
+    const ociUriInput = document.getElementById("heatwave-lh-oci-uri");
     const modal = document.getElementById("heatwave-lh-external-value-modal");
     const modalTitle = document.getElementById("heatwave-lh-external-value-title");
     const modalContent = document.getElementById("heatwave-lh-external-value-content");
@@ -556,6 +601,37 @@
         document.body.classList.add("page-busy");
         status.textContent = "Status : Running";
         status.classList.add("visible");
+      });
+    }
+    const buildBaseUri = (folderValue) => {
+      if (!folderSelect) {
+        return "";
+      }
+      const bucketName = (folderSelect.dataset.bucketName || "").trim();
+      const namespaceName = (folderSelect.dataset.namespaceName || "").trim();
+      if (!bucketName || !namespaceName) {
+        return "";
+      }
+      const normalizedFolder = String(folderValue || "").trim().replace(/^\/+|\/+$/g, "");
+      if (normalizedFolder) {
+        return `oci://${bucketName}@${namespaceName}/${normalizedFolder}/`;
+      }
+      return `oci://${bucketName}@${namespaceName}/`;
+    };
+    let currentBaseUri = buildBaseUri(folderSelect ? folderSelect.value : "");
+    if (folderSelect && ociUriInput) {
+      folderSelect.addEventListener("change", () => {
+        const nextBaseUri = buildBaseUri(folderSelect.value);
+        if (!nextBaseUri) {
+          return;
+        }
+        const currentValue = String(ociUriInput.value || "");
+        let suffix = "";
+        if (currentBaseUri && currentValue.startsWith(currentBaseUri)) {
+          suffix = currentValue.slice(currentBaseUri.length).replace(/^\/+/, "");
+        }
+        ociUriInput.value = `${nextBaseUri}${suffix}`;
+        currentBaseUri = nextBaseUri;
       });
     }
     if (definitionModal && definitionCloseButton) {
