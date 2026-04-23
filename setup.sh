@@ -99,6 +99,42 @@ install_os_packages() {
   esac
 }
 
+install_mysql_shell_innovation() {
+  local installer=""
+
+  case "${OS_ID}" in
+    ubuntu)
+      installer="${ROOT_DIR}/ubuntu/install_mysql_shell_innovation.sh"
+      ;;
+    ol|oracle|oraclelinux)
+      case "${OS_VERSION_MAJOR}" in
+        8)
+          installer="${ROOT_DIR}/OL8/install_mysql_shell_innovation.sh"
+          ;;
+        9)
+          installer="${ROOT_DIR}/OL9/install_mysql_shell_innovation.sh"
+          ;;
+        *)
+          echo "Unsupported Oracle Linux version for MySQL Shell Innovation: ${OS_VERSION_ID}." >&2
+          exit 1
+          ;;
+      esac
+      ;;
+    *)
+      echo "Unsupported operating system for MySQL Shell Innovation: ${OS_ID} ${OS_VERSION_ID}." >&2
+      exit 1
+      ;;
+  esac
+
+  if [[ ! -f "${installer}" ]]; then
+    echo "Missing MySQL Shell installer: ${installer}" >&2
+    exit 1
+  fi
+
+  chmod 755 "${installer}"
+  bash "${installer}"
+}
+
 install_python_environment() {
   python3 -m venv "${VENV_DIR}"
   "${VENV_DIR}/bin/python" -m pip install --upgrade pip setuptools wheel
@@ -232,6 +268,7 @@ configure_host_access() {
 main() {
   run_as_root "$@"
   install_os_packages
+  install_mysql_shell_innovation
   require_command python3
   install_python_environment
   prepare_runtime_files
