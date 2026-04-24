@@ -34,6 +34,8 @@ DEFAULT_PROFILE = {
     "wait_timeout": "",
     "interactive_timeout": "",
 }
+LOGIN_VALIDATION_CONNECTION_TIMEOUT_SECONDS = 5
+SESSION_VALIDATION_CONNECTION_TIMEOUT_SECONDS = 3
 SYSTEM_DATABASES = {"information_schema", "mysql", "performance_schema", "sys"}
 DASHBOARD_TABS = [
     {"id": "demo", "label": "Demo"},
@@ -340,7 +342,15 @@ def clear_login_state(keep_profile=True):
         session.pop("profile_name", None)
 
 
-def get_connection_config(user=None, password=None, include_database=True):
+def get_connection_config(
+    user=None,
+    password=None,
+    include_database=True,
+    *,
+    fallback_connection_timeout=None,
+    fallback_read_timeout=None,
+    fallback_write_timeout=None,
+):
     profile = get_session_profile()
     config = {
         "host": profile["host"],
@@ -350,10 +360,16 @@ def get_connection_config(user=None, password=None, include_database=True):
         config["database"] = profile["database"]
     if profile["connection_timeout"]:
         config["connection_timeout"] = profile["connection_timeout"]
+    elif fallback_connection_timeout is not None:
+        config["connection_timeout"] = int(fallback_connection_timeout)
     if profile["read_timeout"]:
         config["read_timeout"] = profile["read_timeout"]
+    elif fallback_read_timeout is not None:
+        config["read_timeout"] = int(fallback_read_timeout)
     if profile["write_timeout"]:
         config["write_timeout"] = profile["write_timeout"]
+    elif fallback_write_timeout is not None:
+        config["write_timeout"] = int(fallback_write_timeout)
     resolved_user = session.get("db_user", "") if user is None else user
     resolved_password = session.get("db_password", "") if password is None else password
     if resolved_user:
@@ -607,6 +623,7 @@ def validate_user(user, password):
         user=user,
         password=password,
         include_database=bool(get_session_profile()["database"]),
+        fallback_connection_timeout=LOGIN_VALIDATION_CONNECTION_TIMEOUT_SECONDS,
     )
     try:
         cnx = mysql_connection(config)
@@ -634,7 +651,12 @@ def _validate_active_session_connection():
     cursor = None
     try:
         cnx = mysql_connection(
-            get_connection_config(include_database=bool(get_session_profile()["database"]))
+            get_connection_config(
+                include_database=bool(get_session_profile()["database"]),
+                fallback_connection_timeout=SESSION_VALIDATION_CONNECTION_TIMEOUT_SECONDS,
+                fallback_read_timeout=SESSION_VALIDATION_CONNECTION_TIMEOUT_SECONDS,
+                fallback_write_timeout=SESSION_VALIDATION_CONNECTION_TIMEOUT_SECONDS,
+            )
         )
         cursor = cnx.cursor()
         cursor.execute("select 1")
