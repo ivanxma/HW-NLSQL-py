@@ -15,6 +15,7 @@ from app_context import (
     _table_exists,
     app,
     choose_default_model,
+    close_mysql_connection,
     get_connection_config,
     login_required,
     mysql_connection,
@@ -279,14 +280,9 @@ def _ensure_vector_table(schema_name, table_name):
         )
         cnx.commit()
     except mysql.connector.Error:
-        if cnx:
-            cnx.rollback()
         raise
     finally:
-        if cursor:
-            cursor.close()
-        if cnx and cnx.is_connected():
-            cnx.close()
+        close_mysql_connection(cnx)
 
 
 def _ensure_schema(schema_name):
@@ -301,14 +297,9 @@ def _ensure_schema(schema_name):
         )
         cnx.commit()
     except mysql.connector.Error:
-        if cnx:
-            cnx.rollback()
         raise
     finally:
-        if cursor:
-            cursor.close()
-        if cnx and cnx.is_connected():
-            cnx.close()
+        close_mysql_connection(cnx)
 
 
 def _insert_content_rows(schema_name, table_name, chunks, source_url):
@@ -331,14 +322,9 @@ def _insert_content_rows(schema_name, table_name, chunks, source_url):
         cnx.commit()
         return inserted
     except mysql.connector.Error:
-        if cnx:
-            cnx.rollback()
         raise
     finally:
-        if cursor:
-            cursor.close()
-        if cnx and cnx.is_connected():
-            cnx.close()
+        close_mysql_connection(cnx)
 
 
 def _get_last_vector_row_id(schema_name, table_name):
@@ -441,10 +427,7 @@ def _search_vectors(schema_name, table_name, question_embedding, search_limit):
         )
         return [list(row) for row in cursor.fetchall()]
     finally:
-        if cursor:
-            cursor.close()
-        if cnx and cnx.is_connected():
-            cnx.close()
+        close_mysql_connection(cnx)
 
 
 def _build_documents_table(rows):
@@ -554,14 +537,9 @@ def create_knowledge_base_from_client_content(
             "embed_model_id": embed_model_id,
         }
     except mysql.connector.Error:
-        if cnx:
-            cnx.rollback()
         raise
     finally:
-        if cursor:
-            cursor.close()
-        if cnx and cnx.is_connected():
-            cnx.close()
+        close_mysql_connection(cnx)
 
 
 @app.route("/heatwave-genai", methods=["GET", "POST"])

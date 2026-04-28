@@ -15,6 +15,7 @@ from app_context import (
     _validate_identifier,
     app,
     choose_default_model,
+    close_mysql_connection,
     fetch_askme_config,
     get_connection_config,
     login_required,
@@ -428,10 +429,7 @@ def _search_similar_chunks(question, table_names, *, topk, min_similarity_score)
         results.sort(key=lambda item: item["similarity_score"], reverse=True)
         return results[:topk]
     finally:
-        if cursor:
-            cursor.close()
-        if cnx and cnx.is_connected():
-            cnx.close()
+        close_mysql_connection(cnx)
 
 
 def _generate_rag_answer(question, table_names, model_id):
@@ -475,10 +473,7 @@ def _generate_rag_answer(question, table_names, model_id):
             )
         return _normalize_text(row[0] if len(row) > 0 else ""), citations
     finally:
-        if cursor:
-            cursor.close()
-        if cnx and cnx.is_connected():
-            cnx.close()
+        close_mysql_connection(cnx)
 
 
 def _generate_summary_answer(question, chunks, model_id):
@@ -552,10 +547,7 @@ def _run_chatbot(question, table_names, model_id, prior_history):
             )
         return answer_text, history, citations
     finally:
-        if cursor:
-            cursor.close()
-        if cnx and cnx.is_connected():
-            cnx.close()
+        close_mysql_connection(cnx)
 
 
 def _create_vector_store(table_name, files, config_values):
@@ -619,11 +611,6 @@ def _create_vector_store(table_name, files, config_values):
             _delete_object_storage_prefix(config_values, prefix)
         except Exception:
             pass
-        if cnx and cnx.is_connected():
-            try:
-                cnx.rollback()
-            except mysql.connector.Error:
-                pass
         if getattr(error, "errno", None) in {2006, 2013}:
             raise RuntimeError(
                 "The MySQL connection was lost while HeatWave was building the vector table. "
@@ -635,17 +622,9 @@ def _create_vector_store(table_name, files, config_values):
             _delete_object_storage_prefix(config_values, prefix)
         except Exception:
             pass
-        if cnx and cnx.is_connected():
-            try:
-                cnx.rollback()
-            except mysql.connector.Error:
-                pass
         raise RuntimeError("Vector table creation failed: {}".format(error)) from error
     finally:
-        if cursor:
-            cursor.close()
-        if cnx and cnx.is_connected():
-            cnx.close()
+        close_mysql_connection(cnx)
 
 
 def _drop_vector_table(table_name):
@@ -663,14 +642,9 @@ def _drop_vector_table(table_name):
         )
         cnx.commit()
     except mysql.connector.Error:
-        if cnx:
-            cnx.rollback()
         raise
     finally:
-        if cursor:
-            cursor.close()
-        if cnx and cnx.is_connected():
-            cnx.close()
+        close_mysql_connection(cnx)
 
 
 @app.route("/askme-genai", methods=["GET", "POST"])

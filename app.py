@@ -1,12 +1,15 @@
 import base64
 import csv
 from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler
 import io
 from itertools import zip_longest
 import json
 import os
 import re
 import secrets
+import socket
+import ssl
 import sys
 import time
 from functools import wraps
@@ -16,6 +19,7 @@ import mysql.connector
 from openpyxl import load_workbook
 from flask import Flask, Response, flash, redirect, render_template, request, session, url_for
 from mysql.connector import errorcode
+from werkzeug.serving import ThreadedWSGIServer, WSGIRequestHandler, is_ssl_error, load_ssl_context
 
 
 APP_TITLE = "HeatWave Demo"
@@ -36,6 +40,9 @@ DEFAULT_PROFILE = {
 }
 LOGIN_VALIDATION_CONNECTION_TIMEOUT_SECONDS = 5
 SESSION_VALIDATION_CONNECTION_TIMEOUT_SECONDS = 3
+DEFAULT_CONNECTION_TIMEOUT_SECONDS = 5
+DEFAULT_TLS_HANDSHAKE_TIMEOUT_SECONDS = 5
+DEFAULT_REQUEST_SOCKET_TIMEOUT_SECONDS = 30
 SYSTEM_DATABASES = {"information_schema", "mysql", "performance_schema", "sys"}
 DASHBOARD_TABS = [
     {"id": "demo", "label": "Demo"},
@@ -289,7 +296,7 @@ def fetch_connection_timeout_settings():
         "interactive_timeout": "",
     }
     profile = get_session_profile()
-    default_values["connection_timeout"] = profile.get("connection_timeout", "")
+    default_values["connection_timeout"] = profile.get("connection_timeout") or DEFAULT_CONNECTION_TIMEOUT_SECONDS
     if not session.get("logged_in"):
         return default_values
     try:
@@ -394,22 +401,34 @@ def _apply_connection_profile_session_settings(cnx, profile=None):
         assignments.append(("interactive_timeout", int(active_profile["interactive_timeout"])))
     if not assignments:
         return
-    cursor = None
+    cursor = cnx.cursor()
+    for variable_name, variable_value in assignments:
+        cursor.execute(f"SET SESSION {variable_name} = {variable_value}")
+
+
+def close_mysql_connection(cnx):
+    if not cnx:
+        return
     try:
-        cursor = cnx.cursor()
-        for variable_name, variable_value in assignments:
-            cursor.execute(f"SET SESSION {variable_name} = {variable_value}")
-    finally:
-        if cursor:
-            cursor.close()
+        cnx.close()
+    except Exception:
+        pass
 
 
 def mysql_connection(config=None, *, autocommit=False):
-    cnx = mysql.connector.connect(**(config or get_connection_config()))
-    cnx.can_consume_results = True
-    _apply_connection_profile_session_settings(cnx)
-    cnx.autocommit = bool(autocommit)
-    return cnx
+    connection_config = dict(config or get_connection_config())
+    configured_connection_timeout = _normalized_optional_timeout(connection_config.get("connection_timeout"))
+    connection_config["connection_timeout"] = configured_connection_timeout or DEFAULT_CONNECTION_TIMEOUT_SECONDS
+    cnx = None
+    try:
+        cnx = mysql.connector.connect(**connection_config)
+        cnx.can_consume_results = True
+        _apply_connection_profile_session_settings(cnx)
+        cnx.autocommit = bool(autocommit)
+        return cnx
+    except Exception:
+        close_mysql_connection(cnx)
+        raise
 
 
 def run_sql(sql_text, params=None, *, include_database=True, autocommit=False):
@@ -424,10 +443,7 @@ def run_sql(sql_text, params=None, *, include_database=True, autocommit=False):
         cursor.execute(sql_text, params or ())
         return cursor.fetchall()
     finally:
-        if cursor:
-            cursor.close()
-        if cnx and cnx.is_connected():
-            cnx.close()
+        close_mysql_connection(cnx)
 
 
 def exec_sql(sql_text, params=None, *, include_database=True, autocommit=False):
@@ -443,14 +459,9 @@ def exec_sql(sql_text, params=None, *, include_database=True, autocommit=False):
         cnx.commit()
         return True
     except mysql.connector.Error:
-        if cnx:
-            cnx.rollback()
         raise
     finally:
-        if cursor:
-            cursor.close()
-        if cnx and cnx.is_connected():
-            cnx.close()
+        close_mysql_connection(cnx)
 
 
 def run_sql_with_columns(sql_text, params=None, *, include_database=True, autocommit=False):
@@ -468,10 +479,7 @@ def run_sql_with_columns(sql_text, params=None, *, include_database=True, autoco
             "rows": [list(row) for row in cursor.fetchall()],
         }
     finally:
-        if cursor:
-            cursor.close()
-        if cnx and cnx.is_connected():
-            cnx.close()
+        close_mysql_connection(cnx)
 
 
 def run_sql_multi_resultsets(sql_text, params=None, *, include_database=True, autocommit=False):
@@ -517,19 +525,9 @@ def run_sql_multi_resultsets(sql_text, params=None, *, include_database=True, au
         cnx.commit()
         return datasets
     except (mysql.connector.Error, ValueError):
-        if cnx:
-            cnx.rollback()
         raise
     finally:
-        if cursor:
-            cursor.close()
-        if cnx and cnx.is_connected():
-            try:
-                cnx.consume_results()
-            except mysql.connector.Error:
-                pass
-        if cnx and cnx.is_connected():
-            cnx.close()
+        close_mysql_connection(cnx)
 
 
 def run_sql_dicts(sql_text, params=None, *, include_database=True, autocommit=False):
@@ -560,10 +558,7 @@ def call_proc(proc_name, args):
             "columnset": columns,
         }
     finally:
-        if cursor:
-            cursor.close()
-        if cnx and cnx.is_connected():
-            cnx.close()
+        close_mysql_connection(cnx)
 
 
 def _normalize_modal_cell(value):
@@ -665,10 +660,7 @@ def _validate_active_session_connection():
     except mysql.connector.Error:
         return False
     finally:
-        if cursor:
-            cursor.close()
-        if cnx and cnx.is_connected():
-            cnx.close()
+        close_mysql_connection(cnx)
 
 
 @app.before_request
@@ -760,14 +752,9 @@ def save_configdb_databases(database_names):
             )
         cnx.commit()
     except mysql.connector.Error:
-        if cnx:
-            cnx.rollback()
         raise
     finally:
-        if cursor:
-            cursor.close()
-        if cnx and cnx.is_connected():
-            cnx.close()
+        close_mysql_connection(cnx)
 
 
 def setup_askme_db():
@@ -882,14 +869,9 @@ def save_askme_config(config_values):
         )
         cnx.commit()
     except mysql.connector.Error:
-        if cnx:
-            cnx.rollback()
         raise
     finally:
-        if cursor:
-            cursor.close()
-        if cnx and cnx.is_connected():
-            cnx.close()
+        close_mysql_connection(cnx)
 
 
 def _get_model_ids(query):
@@ -1277,14 +1259,9 @@ def import_file_to_table(
             )
             cnx.commit()
         except mysql.connector.Error:
-            if cnx:
-                cnx.rollback()
             raise
         finally:
-            if cursor:
-                cursor.close()
-            if cnx and cnx.is_connected():
-                cnx.close()
+            close_mysql_connection(cnx)
 
     return {
         "database_name": database_name,
@@ -2992,10 +2969,68 @@ def execute_heatwave_performance_query(sql_text):
             "elapsed_perf_seconds": finished_counter - started_counter,
         }, autocommit_value
     finally:
-        if cursor:
-            cursor.close()
-        if cnx and cnx.is_connected():
-            cnx.close()
+        close_mysql_connection(cnx)
+
+
+class DeferredTLSWSGIRequestHandler(WSGIRequestHandler):
+    timeout = None
+
+    def handle(self):
+        try:
+            if self.server.ssl_context is not None and isinstance(self.connection, ssl.SSLSocket):
+                handshake_timeout = getattr(self.server, "ssl_handshake_timeout", None)
+                if handshake_timeout is not None:
+                    self.connection.settimeout(handshake_timeout)
+                self.connection.do_handshake()
+                self.connection.settimeout(getattr(self.server, "request_socket_timeout", None))
+            BaseHTTPRequestHandler.handle(self)
+        except (ConnectionError, socket.timeout) as error:
+            self.connection_dropped(error)
+        except Exception as error:
+            if self.server.ssl_context is not None and is_ssl_error(error):
+                self.log_error("SSL error occurred: %s", error)
+            else:
+                raise
+
+
+class DeferredTLSThreadedWSGIServer(ThreadedWSGIServer):
+    def __init__(
+        self,
+        host,
+        port,
+        app,
+        handler=None,
+        passthrough_errors=False,
+        ssl_context=None,
+        fd=None,
+        *,
+        ssl_handshake_timeout=DEFAULT_TLS_HANDSHAKE_TIMEOUT_SECONDS,
+        request_socket_timeout=DEFAULT_REQUEST_SOCKET_TIMEOUT_SECONDS,
+    ):
+        resolved_ssl_context = None
+        if ssl_context is not None:
+            if isinstance(ssl_context, tuple):
+                resolved_ssl_context = load_ssl_context(*ssl_context)
+            else:
+                resolved_ssl_context = ssl_context
+        self.ssl_handshake_timeout = ssl_handshake_timeout
+        self.request_socket_timeout = request_socket_timeout
+        super().__init__(
+            host,
+            port,
+            app,
+            handler=handler or DeferredTLSWSGIRequestHandler,
+            passthrough_errors=passthrough_errors,
+            ssl_context=None,
+            fd=fd,
+        )
+        if resolved_ssl_context is not None:
+            self.socket = resolved_ssl_context.wrap_socket(
+                self.socket,
+                server_side=True,
+                do_handshake_on_connect=False,
+            )
+            self.ssl_context = resolved_ssl_context
 
 
 import pages.auth  # noqa: F401
@@ -3020,4 +3055,23 @@ if __name__ == "__main__":
     cert_file = os.environ.get("APP_SSL_CERT_FILE", "")
     key_file = os.environ.get("APP_SSL_KEY_FILE", "")
     ssl_context = (cert_file, key_file) if cert_file and key_file else None
-    app.run(host=host, port=port, debug=False, ssl_context=ssl_context)
+    if ssl_context is None:
+        app.run(host=host, port=port, debug=False)
+    else:
+        ssl_handshake_timeout = (
+            _normalized_optional_timeout(os.environ.get("APP_SSL_HANDSHAKE_TIMEOUT"))
+            or DEFAULT_TLS_HANDSHAKE_TIMEOUT_SECONDS
+        )
+        request_socket_timeout = (
+            _normalized_optional_timeout(os.environ.get("APP_REQUEST_SOCKET_TIMEOUT"))
+            or DEFAULT_REQUEST_SOCKET_TIMEOUT_SECONDS
+        )
+        server = DeferredTLSThreadedWSGIServer(
+            host,
+            port,
+            app,
+            ssl_context=ssl_context,
+            ssl_handshake_timeout=ssl_handshake_timeout,
+            request_socket_timeout=request_socket_timeout,
+        )
+        server.serve_forever()

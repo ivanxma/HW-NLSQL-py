@@ -12,6 +12,7 @@ from app_context import (
     _quote_identifier,
     _table_exists,
     app,
+    close_mysql_connection,
     get_connection_config,
     login_required,
     mysql_connection,
@@ -731,19 +732,9 @@ def _execute_nl2ml_sql(sql_text):
             "options_raw_text": _normalize_text_value(options_value).strip(),
         }
     except (ValueError, mysql.connector.Error):
-        if cnx:
-            cnx.rollback()
         raise
     finally:
-        if cursor:
-            cursor.close()
-        if cnx and cnx.is_connected():
-            try:
-                cnx.consume_results()
-            except mysql.connector.Error:
-                pass
-        if cnx and cnx.is_connected():
-            cnx.close()
+        close_mysql_connection(cnx)
 
 
 def _initialize_iris_database():
@@ -807,14 +798,9 @@ def _initialize_iris_database():
             "cleared_model_catalog": cleared_model_catalog,
         }
     except mysql.connector.Error:
-        if cnx:
-            cnx.rollback()
         raise
     finally:
-        if cursor:
-            cursor.close()
-        if cnx and cnx.is_connected():
-            cnx.close()
+        close_mysql_connection(cnx)
 
 
 def _execute_iris_ml_train(optimization_metric=""):
@@ -842,11 +828,6 @@ def _execute_iris_ml_train(optimization_metric=""):
             "ml_schema_name": ml_schema_name,
         }
     except mysql.connector.Error as error:
-        if cnx and cnx.is_connected():
-            try:
-                cnx.rollback()
-            except mysql.connector.Error:
-                pass
         if getattr(error, "errno", None) in {2006, 2013}:
             raise RuntimeError(
                 "The MySQL connection was lost while ML_TRAIN was running. "
@@ -854,10 +835,7 @@ def _execute_iris_ml_train(optimization_metric=""):
             ) from error
         raise
     finally:
-        if cursor:
-            cursor.close()
-        if cnx and cnx.is_connected():
-            cnx.close()
+        close_mysql_connection(cnx)
 
 
 def _execute_iris_ml_model_load():
@@ -879,14 +857,9 @@ def _execute_iris_ml_model_load():
             "elapsed_seconds": time.perf_counter() - started_counter,
         }
     except mysql.connector.Error:
-        if cnx:
-            cnx.rollback()
         raise
     finally:
-        if cursor:
-            cursor.close()
-        if cnx and cnx.is_connected():
-            cnx.close()
+        close_mysql_connection(cnx)
 
 
 def _execute_iris_ml_predict_row():
@@ -921,14 +894,9 @@ def _execute_iris_ml_predict_row():
             "prediction_records": _build_prediction_records(prediction_value),
         }
     except mysql.connector.Error:
-        if cnx:
-            cnx.rollback()
         raise
     finally:
-        if cursor:
-            cursor.close()
-        if cnx and cnx.is_connected():
-            cnx.close()
+        close_mysql_connection(cnx)
 
 
 def _execute_iris_ml_predict_table():
@@ -955,14 +923,9 @@ def _execute_iris_ml_predict_table():
             "predictions_table": _fetch_named_table("ml_data", "iris_predictions"),
         }
     except mysql.connector.Error:
-        if cnx:
-            cnx.rollback()
         raise
     finally:
-        if cursor:
-            cursor.close()
-        if cnx and cnx.is_connected():
-            cnx.close()
+        close_mysql_connection(cnx)
 
 
 def _execute_iris_ml_score():
@@ -989,14 +952,9 @@ def _execute_iris_ml_score():
             "score_records": _build_score_records(score_value),
         }
     except mysql.connector.Error:
-        if cnx:
-            cnx.rollback()
         raise
     finally:
-        if cursor:
-            cursor.close()
-        if cnx and cnx.is_connected():
-            cnx.close()
+        close_mysql_connection(cnx)
 
 
 def _execute_iris_ml_explain_table():
@@ -1023,14 +981,9 @@ def _execute_iris_ml_explain_table():
             "source_table": _fetch_named_table("ml_data", "iris_test"),
         }
     except mysql.connector.Error:
-        if cnx:
-            cnx.rollback()
         raise
     finally:
-        if cursor:
-            cursor.close()
-        if cnx and cnx.is_connected():
-            cnx.close()
+        close_mysql_connection(cnx)
 
 
 @app.route("/heatwave-ml", methods=["GET", "POST"])

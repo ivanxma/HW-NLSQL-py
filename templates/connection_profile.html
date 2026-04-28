@@ -47,7 +47,7 @@
       </label>
       <label>
         Connection timeout (seconds)
-        <input name="connection_timeout" type="number" min="1" step="1" value="{{ form_profile.connection_timeout }}" placeholder="MySQL default">
+        <input name="connection_timeout" type="number" min="1" step="1" value="{{ form_profile.connection_timeout }}" placeholder="App default (5)">
       </label>
       <label>
         Read timeout (seconds)
@@ -69,7 +69,7 @@
         Interactive timeout (seconds)
         <input name="interactive_timeout" type="number" min="1" step="1" value="{{ form_profile.interactive_timeout }}" placeholder="MySQL default">
       </label>
-      <p class="helper-text">Leave timeout fields blank to use the MySQL Connector default values.</p>
+      <p class="helper-text">Leave connection timeout blank to use the app default of 5 seconds. Leave other timeout fields blank to use the MySQL or connector defaults.</p>
       <div class="form-actions profile-actions">
         <button class="button primary" type="submit">Save Profile</button>
         {% if form_profile.name %}

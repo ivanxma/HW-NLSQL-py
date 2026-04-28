@@ -138,7 +138,7 @@
               min="1"
               step="1"
               value="{{ connection_timeout_settings.connection_timeout }}"
-              placeholder="Connector default"
+              placeholder="App default (5)"
             >
           </label>
           <label>
@@ -193,7 +193,7 @@
           </label>
           <p class="helper-text">
             Read, write, execution, wait, and interactive timeout values are applied as session settings on each new MySQL connection.
-            Connection timeout is the connector-side connect timeout.
+            Connection timeout is the connector-side connect timeout and falls back to 5 seconds when left blank.
           </p>
           <div class="form-actions">
             <button class="button primary" type="submit">Save Timeout Settings</button>
